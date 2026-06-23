@@ -120,4 +120,7 @@ def _candidate_delta_preview(match: object) -> str:
     fields = ", ".join(delta.field_path for delta in deltas[:3])
     blocking = getattr(match, "blocking_candidate_delta_count", 0)
     informational = len(deltas) - blocking
+    if blocking == 0:
+        noun = "delta" if informational == 1 else "deltas"
+        return f"{informational} informational candidate {noun}: {fields}"
     return f"{len(deltas)} candidate deltas: {fields} ({blocking} blocking, {informational} informational)"

@@ -86,3 +86,64 @@ def test_id_only_candidate_delta_does_not_block_plan():
     assert plan.matches[0].status == "MATCHED_IDENTICAL_MULTIPLE"
     assert plan.matches[0].id_only_delta_count == 1
     assert plan.matches[0].blocking_candidate_delta_count == 0
+
+
+def test_variable_set_only_candidate_delta_is_identical_multiple_and_commit_allowed():
+    acps = [SourceAcpRef("a", "Luxor", 1), SourceAcpRef("b", "Excalibur", 2)]
+    options = LayerComposerOptions(target_acp_name="target")
+    plan = build_plan(
+        csv_filename="x.csv",
+        entries=[entry()],
+        duplicate_rule_names=[],
+        source_acps=acps,
+        source_rules_by_acp={
+            "a": [{"id": "1", "name": "Rule A", "action": "ALLOW", "enabled": True, "variableSet": {"name": "Default Set", "id": "vs-1", "type": "VariableSet"}}],
+            "b": [{"id": "2", "name": "Rule A", "action": "ALLOW", "enabled": True, "variableSet": {"name": "Property Set", "id": "vs-2", "type": "VariableSet"}}],
+        },
+        options=options,
+    )
+    match = plan.matches[0]
+    assert match.status == "MATCHED_IDENTICAL_MULTIPLE"
+    assert match.selected_candidate.source_acp_name == "Luxor"
+    assert match.blocking_candidate_delta_count == 0
+    assert {delta.delta_type for delta in match.candidate_field_deltas} == {"CONTEXT_ONLY_DIFFERENCE"}
+    assert plan.summary["matched_with_candidate_deltas"] == 0
+    assert plan.summary["context_only_candidate_deltas"] == 2
+    assert plan.commit_allowed
+
+
+def test_variable_set_and_object_ids_only_do_not_block_commit():
+    acps = [SourceAcpRef("a", "Luxor", 1), SourceAcpRef("b", "Excalibur", 2)]
+    options = LayerComposerOptions(target_acp_name="target")
+    plan = build_plan(
+        csv_filename="x.csv",
+        entries=[entry()],
+        duplicate_rule_names=[],
+        source_acps=acps,
+        source_rules_by_acp={
+            "a": [
+                {
+                    "id": "1",
+                    "name": "Rule A",
+                    "action": "ALLOW",
+                    "enabled": True,
+                    "variableSet": {"name": "Default Set", "id": "vs-1", "type": "VariableSet"},
+                    "sourceNetworks": {"objects": [{"name": "NET-A", "id": "net-1"}]},
+                }
+            ],
+            "b": [
+                {
+                    "id": "2",
+                    "name": "Rule A",
+                    "action": "ALLOW",
+                    "enabled": True,
+                    "variableSet": {"name": "Property Set", "id": "vs-2", "type": "VariableSet"},
+                    "sourceNetworks": {"objects": [{"name": "NET-A", "id": "net-2"}]},
+                }
+            ],
+        },
+        options=options,
+    )
+    assert plan.matches[0].status == "MATCHED_IDENTICAL_MULTIPLE"
+    assert plan.matches[0].blocking_candidate_delta_count == 0
+    assert plan.commit_allowed

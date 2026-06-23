@@ -42,3 +42,24 @@ def test_report_includes_candidate_field_deltas_table_and_json_fields():
     assert "candidate_field_deltas" in match
     assert match["semantic_candidate_delta_count"] == 1
     assert match["blocking_candidate_delta_count"] == 1
+
+
+def test_report_labels_variable_set_delta_as_context_only_info():
+    from fmc_layer_composer.composer.models import LayerCsvEntry, SourceAcpRef
+
+    entry = LayerCsvEntry(1, "Rule A", "Rule A", None, None, [], [], [], [], [], [], [], None, {})
+    plan = build_plan(
+        csv_filename="x.csv",
+        entries=[entry],
+        duplicate_rule_names=[],
+        source_acps=[SourceAcpRef("a", "Luxor", 1), SourceAcpRef("b", "Excalibur", 2)],
+        source_rules_by_acp={
+            "a": [{"id": "1", "name": "Rule A", "action": "ALLOW", "variableSet": {"name": "Default Set", "id": "vs-1", "type": "VariableSet"}}],
+            "b": [{"id": "2", "name": "Rule A", "action": "ALLOW", "variableSet": {"name": "Property Set", "id": "vs-2", "type": "VariableSet"}}],
+        },
+        options=LayerComposerOptions(target_acp_name="target"),
+    )
+    html = render_dry_run_html(plan)
+    assert "variableSet.name" in html
+    assert "CONTEXT_ONLY_DIFFERENCE" in html
+    assert "This is treated as informational and does not block rule copy." in html

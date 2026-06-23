@@ -40,6 +40,16 @@ LOGGING_FIELDS = (
     "youTube",
 )
 
+BLOCKING_LOGGING_FIELDS = (
+    "logBegin",
+    "logEnd",
+    "logFiles",
+    "sendEventsToFMC",
+    "enableSyslog",
+    "syslogSeverity",
+    "advancedLogging",
+)
+
 OBJECT_FIELD_MESSAGES = {
     "sourceZones": ("sourceZones.objects.names", "ZONE_NAME_MISMATCH", "Source zone object names differ across source ACP candidates."),
     "destinationZones": ("destinationZones.objects.names", "ZONE_NAME_MISMATCH", "Destination zone object names differ across source ACP candidates."),
@@ -62,7 +72,6 @@ OBJECT_FIELD_MESSAGES = {
 POLICY_FIELD_MESSAGES = {
     "filePolicy": ("filePolicy.name", "FILE_POLICY_MISMATCH", "File policy names differ across source ACP candidates."),
     "ipsPolicy": ("ipsPolicy.name", "IPS_POLICY_MISMATCH", "IPS policy names differ across source ACP candidates."),
-    "variableSet": ("variableSet.name", "VARIABLE_SET_MISMATCH", "Variable set names differ across source ACP candidates."),
 }
 
 SCALAR_FIELD_MESSAGES = {
@@ -72,8 +81,13 @@ SCALAR_FIELD_MESSAGES = {
 
 LOGGING_FIELD_MESSAGES = {
     field: (field, "LOGGING_BEHAVIOR_MISMATCH", f"Logging field {field} differs across source ACP candidates.")
-    for field in LOGGING_FIELDS
+    for field in BLOCKING_LOGGING_FIELDS
 }
+
+VARIABLE_SET_CONTEXT_MESSAGE = (
+    "Variable set differs between source ACPs. "
+    "This is treated as informational and does not block rule copy."
+)
 
 
 def build_rule_signature(rule: dict[str, Any]) -> dict[str, Any]:
@@ -112,6 +126,7 @@ def compare_candidate_signatures(candidates: list[SourceRuleCandidate]) -> list[
     deltas.extend(_compare_scalar_fields(candidates, SCALAR_FIELD_MESSAGES, severity="warning"))
     deltas.extend(_compare_object_fields(candidates))
     deltas.extend(_compare_policy_fields(candidates))
+    deltas.extend(_compare_variable_set_context(candidates))
     deltas.extend(_compare_scalar_fields(candidates, LOGGING_FIELD_MESSAGES, severity="warning"))
     return deltas
 
@@ -126,6 +141,10 @@ def blocking_candidate_delta_count(deltas: list[CandidateFieldDelta]) -> int:
 
 def id_only_delta_count(deltas: list[CandidateFieldDelta]) -> int:
     return sum(1 for delta in deltas if delta.delta_type == "ID_ONLY_DIFFERENCE")
+
+
+def informational_candidate_delta_count(deltas: list[CandidateFieldDelta]) -> int:
+    return sum(1 for delta in deltas if delta.severity == "info")
 
 
 def semantic_candidate_delta_count(deltas: list[CandidateFieldDelta]) -> int:
@@ -185,6 +204,26 @@ def _compare_policy_fields(candidates: list[SourceRuleCandidate]) -> list[Candid
                     delta_type=delta_type,
                     values_by_candidate=values,
                     message=message,
+                )
+            )
+    return deltas
+
+
+def _compare_variable_set_context(candidates: list[SourceRuleCandidate]) -> list[CandidateFieldDelta]:
+    deltas: list[CandidateFieldDelta] = []
+    for attribute in ("name", "id", "type"):
+        values = {
+            candidate.source_acp_name: _context_attribute(candidate.signature.get("variableSet"), attribute)
+            for candidate in candidates
+        }
+        if _values_differ(values):
+            deltas.append(
+                CandidateFieldDelta(
+                    field_path=f"variableSet.{attribute}",
+                    severity="info",
+                    delta_type="CONTEXT_ONLY_DIFFERENCE",
+                    values_by_candidate=values,
+                    message=VARIABLE_SET_CONTEXT_MESSAGE,
                 )
             )
     return deltas
@@ -293,6 +332,14 @@ def _policy_name(value: Any) -> Any:
     if isinstance(value, dict):
         return value.get("name") or value.get("value") or value.get("id")
     return str(value)
+
+
+def _context_attribute(value: Any, attribute: str) -> Any:
+    if value in (None, "", [], {}):
+        return None
+    if isinstance(value, dict):
+        return value.get(attribute)
+    return str(value) if attribute == "name" else None
 
 
 def _literal_delta_type(containers: dict[str, dict[str, list[str]]], default: str) -> str:

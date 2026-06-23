@@ -20,6 +20,7 @@ from .signatures import (
     blocking_candidate_delta_count,
     compare_candidate_signatures,
     id_only_delta_count,
+    informational_candidate_delta_count,
     semantic_candidate_delta_count,
 )
 from .utils import safe_target_name
@@ -119,6 +120,7 @@ def _candidate_match(
     blocking_count = blocking_candidate_delta_count(candidate_field_deltas)
     semantic_count = semantic_candidate_delta_count(candidate_field_deltas)
     id_only_count = id_only_delta_count(candidate_field_deltas)
+    informational_count = informational_candidate_delta_count(candidate_field_deltas)
     candidate_deltas = [
         asdict(delta)
         for delta in candidate_field_deltas
@@ -137,8 +139,7 @@ def _candidate_match(
         field_preview = ", ".join(delta.field_path for delta in candidate_field_deltas if delta.severity == "warning")
         warnings.append(f"{blocking_count} blocking candidate field delta(s): {field_preview}.")
     elif candidate_field_deltas:
-        info_count = len(candidate_field_deltas)
-        warnings.append(f"{info_count} informational candidate field delta(s); no semantic copy blocker.")
+        warnings.append(f"{informational_count} informational candidate field delta(s); no semantic copy blocker.")
 
     return LayerRuleMatch(
         csv_entry=entry,
@@ -179,7 +180,12 @@ def _build_summary(matches: list[LayerRuleMatch]) -> dict[str, Any]:
         "warnings": warnings,
         "blockers": 0,
         "semantic_candidate_deltas": sum(match.semantic_candidate_delta_count for match in matches),
+        "informational_candidate_deltas": sum(
+            informational_candidate_delta_count(match.candidate_field_deltas)
+            for match in matches
+        ),
         "id_only_candidate_deltas": field_delta_types["ID_ONLY_DIFFERENCE"],
+        "context_only_candidate_deltas": field_delta_types["CONTEXT_ONLY_DIFFERENCE"],
         "ordering_only_deltas": field_delta_types["ORDERING_ONLY_DIFFERENCE"],
         "empty_missing_normalization_deltas": field_delta_types["EMPTY_MISSING_NORMALIZATION"],
     }

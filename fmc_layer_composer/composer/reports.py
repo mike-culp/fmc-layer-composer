@@ -125,6 +125,8 @@ def _candidate_delta_summary(plan: LayerComposerPlan) -> str:
     return _summary_table(
         {
             "semantic candidate deltas": plan.summary.get("semantic_candidate_deltas", 0),
+            "informational candidate deltas": plan.summary.get("informational_candidate_deltas", 0),
+            "context-only candidate deltas": plan.summary.get("context_only_candidate_deltas", 0),
             "ID-only candidate deltas": plan.summary.get("id_only_candidate_deltas", 0),
             "ordering-only deltas": plan.summary.get("ordering_only_deltas", 0),
             "empty/missing normalization deltas": plan.summary.get("empty_missing_normalization_deltas", 0),
@@ -143,7 +145,7 @@ def _candidate_field_delta_tables(plan: LayerComposerPlan) -> str:
         header += "<th>message</th></tr>"
         rows = []
         for delta in match.candidate_field_deltas:
-            row = f"<tr><td>{_e(delta.field_path)}</td><td>{_e(delta.severity)}</td><td>{_e(delta.delta_type)}</td>"
+            row = f"<tr><td>{_e(delta.field_path)}</td><td>{_e(delta.severity)}</td><td>{_e(_delta_type_label(delta.delta_type))}</td>"
             for name in candidate_names:
                 row += f"<td>{_e(json.dumps(delta.values_by_candidate.get(name), default=str))}</td>"
             row += f"<td>{_e(delta.message)}</td></tr>"
@@ -191,7 +193,19 @@ def _candidate_delta_preview(match: Any) -> str:
     blocking = match.blocking_candidate_delta_count
     informational = len(match.candidate_field_deltas) - blocking
     fields = ", ".join(delta.field_path for delta in match.candidate_field_deltas[:3])
+    if blocking == 0:
+        noun = "delta" if informational == 1 else "deltas"
+        return f"{informational} informational candidate {noun}: {fields}"
     return f"{len(match.candidate_field_deltas)} candidate deltas ({blocking} blocking, {informational} informational): {fields}"
+
+
+def _delta_type_label(delta_type: str) -> str:
+    labels = {
+        "CONTEXT_ONLY_DIFFERENCE": "Context-only difference",
+        "ID_ONLY_DIFFERENCE": "ID-only difference",
+        "ORDERING_ONLY_DIFFERENCE": "Ordering-only difference",
+    }
+    return labels.get(delta_type, delta_type)
 
 
 def _list(title: str, items: list[str]) -> str:

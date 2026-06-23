@@ -75,3 +75,55 @@ def test_action_and_application_differences_are_blocking():
     by_field = {delta.field_path: delta for delta in deltas}
     assert by_field["action"].severity == "warning"
     assert by_field["applications.objects.names"].severity == "warning"
+
+
+def test_variable_set_name_difference_is_context_only_info():
+    deltas = compare_candidate_signatures(
+        [
+            candidate("Luxor", {"name": "Rule A", "variableSet": {"name": "Default Set", "id": "1", "type": "VariableSet"}}),
+            candidate("Excalibur", {"name": "Rule A", "variableSet": {"name": "Property Set", "id": "1", "type": "VariableSet"}}),
+        ]
+    )
+    assert len(deltas) == 1
+    assert deltas[0].field_path == "variableSet.name"
+    assert deltas[0].delta_type == "CONTEXT_ONLY_DIFFERENCE"
+    assert deltas[0].severity == "info"
+    assert "does not block rule copy" in deltas[0].message
+
+
+def test_variable_set_id_difference_is_context_only_info():
+    deltas = compare_candidate_signatures(
+        [
+            candidate("Luxor", {"name": "Rule A", "variableSet": {"name": "Default Set", "id": "1", "type": "VariableSet"}}),
+            candidate("Excalibur", {"name": "Rule A", "variableSet": {"name": "Default Set", "id": "2", "type": "VariableSet"}}),
+        ]
+    )
+    assert len(deltas) == 1
+    assert deltas[0].field_path == "variableSet.id"
+    assert deltas[0].delta_type == "CONTEXT_ONLY_DIFFERENCE"
+    assert deltas[0].severity == "info"
+
+
+def test_variable_set_and_object_id_differences_are_non_blocking_when_names_match():
+    deltas = compare_candidate_signatures(
+        [
+            candidate(
+                "Luxor",
+                {
+                    "name": "Rule A",
+                    "variableSet": {"name": "Default Set", "id": "1", "type": "VariableSet"},
+                    "sourceNetworks": {"objects": [{"name": "NET-A", "id": "net-1"}]},
+                },
+            ),
+            candidate(
+                "Excalibur",
+                {
+                    "name": "Rule A",
+                    "variableSet": {"name": "Property Set", "id": "2", "type": "VariableSet"},
+                    "sourceNetworks": {"objects": [{"name": "NET-A", "id": "net-2"}]},
+                },
+            ),
+        ]
+    )
+    assert {delta.delta_type for delta in deltas} == {"CONTEXT_ONLY_DIFFERENCE", "ID_ONLY_DIFFERENCE"}
+    assert all(delta.severity == "info" for delta in deltas)
