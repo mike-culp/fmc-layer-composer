@@ -216,3 +216,9 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# FMC Layer Composer outputs
+reports/
+*.sqlite
+*.db
+.env.*
