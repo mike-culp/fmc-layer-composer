@@ -173,12 +173,14 @@ def _sanity_delta_tables(plan: LayerComposerPlan) -> str:
                 f"<td>{_e(delta.code)}</td>"
                 f"<td>{_e(json.dumps(delta.csv_value, default=str))}</td>"
                 f"<td>{_e(json.dumps(delta.fmc_value, default=str))}</td>"
+                f"<td>{_e(json.dumps(delta.fmc_details, default=str))}</td>"
+                f"<td>{_e(delta.blocking)}</td>"
                 f"<td>{_e(delta.message)}</td>"
                 "</tr>"
             )
         sections.append(
             f"<h3>Rule {match.csv_entry.order}: {_e(match.csv_entry.rule_name)} - CSV-to-FMC Sanity Deltas</h3>"
-            "<table><thead><tr><th>field</th><th>severity</th><th>code</th><th>CSV value</th><th>FMC value</th><th>message</th></tr></thead><tbody>"
+            "<table><thead><tr><th>field</th><th>severity</th><th>classification</th><th>CSV comparison names</th><th>FMC comparison names</th><th>FMC object details</th><th>blocking</th><th>message</th></tr></thead><tbody>"
             + "".join(rows)
             + "</tbody></table>"
         )

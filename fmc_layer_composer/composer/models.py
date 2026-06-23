@@ -89,6 +89,8 @@ class SanityDelta:
     csv_value: Any
     fmc_value: Any
     message: str
+    fmc_details: list[dict[str, Any]] = field(default_factory=list)
+    blocking: bool = False
 
 
 @dataclass

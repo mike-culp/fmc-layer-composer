@@ -102,7 +102,7 @@ def _render_plan(plan: object) -> None:
                 "selected source ACP": match.selected_candidate.source_acp_name if match.selected_candidate else "",
                 "candidate ACPs": ", ".join(candidate.source_acp_name for candidate in match.candidates),
                 "warnings": "; ".join(match.warnings),
-                "deltas": "; ".join(delta.code for delta in match.sanity_deltas),
+                "deltas": _sanity_delta_preview(match),
                 "candidate deltas": _candidate_delta_preview(match),
                 "commit action": "create" if match.selected_candidate else "skip/block",
             }
@@ -124,3 +124,18 @@ def _candidate_delta_preview(match: object) -> str:
         noun = "delta" if informational == 1 else "deltas"
         return f"{informational} informational candidate {noun}: {fields}"
     return f"{len(deltas)} candidate deltas: {fields} ({blocking} blocking, {informational} informational)"
+
+
+def _sanity_delta_preview(match: object) -> str:
+    deltas = getattr(match, "sanity_deltas", [])
+    messages: list[str] = []
+    for delta in deltas:
+        if delta.code == "POSSIBLE_GROUP_COLLAPSE_OR_EXPANSION_DELTA":
+            messages.append(f"{delta.code}: {delta.message}")
+        elif delta.code == "APPLICATION_MAPPING_OR_EXPANSION_DELTA":
+            messages.append(f"{delta.code}: CSV app/app-group names differ from FMC application names.")
+        elif delta.severity == "info":
+            messages.append(f"{delta.code}: {delta.field}")
+        else:
+            messages.append(delta.code)
+    return "; ".join(messages)
