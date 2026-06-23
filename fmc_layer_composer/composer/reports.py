@@ -174,7 +174,8 @@ def _write_created_csv(path: Path, result: LayerComposerResult) -> None:
         writer = csv.DictWriter(handle, fieldnames=["csv_order", "rule_name", "source_acp_name", "source_rule_id", "target_rule_id", "status", "error"])
         writer.writeheader()
         for item in result.created_rules:
-            writer.writerow(asdict(item))
+            row = asdict(item)
+            writer.writerow({field: row.get(field) for field in writer.fieldnames})
 
 
 def _safe_file_part(value: str) -> str:

@@ -1,0 +1,24 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "fmc-layer-composer"
+version = "0.1.0"
+description = "Streamlit tool for composing Cisco FMC access policies from migrated source ACP rules."
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "streamlit",
+    "requests",
+    "pandas",
+    "python-dateutil",
+]
+
+[project.optional-dependencies]
+test = [
+    "pytest",
+]
+
+[tool.setuptools.packages.find]
+include = ["fmc_layer_composer*"]

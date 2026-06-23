@@ -40,12 +40,13 @@ This tool copies access rules only.
 python -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
+python -m pip install -e .
 ```
 
 ## Running the app
 
 ```bash
-streamlit run fmc_layer_composer/app.py
+streamlit run streamlit_app.py
 ```
 
 Credentials are session-only. Passwords and FMC tokens are not persisted. The FMC host may remain in Streamlit session state during the local app session.
