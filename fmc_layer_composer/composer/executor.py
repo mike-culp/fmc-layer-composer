@@ -48,6 +48,7 @@ def execute_plan(
     policies_module: Any,
     rules_module: Any,
     reports_module: Any | None = None,
+    diagnostics_logger: Any | None = None,
 ) -> LayerComposerResult:
     if not plan.commit_allowed:
         raise ValueError("Plan is not commit allowed.")
@@ -91,7 +92,8 @@ def execute_plan(
                 domain_uuid,
                 target_id,
                 payload,
-                category=plan.options.rule_category,
+                section=plan.options.rule_section,
+                diagnostics_logger=diagnostics_logger,
             )
             created.append(
                 CreatedRuleResult(
@@ -103,6 +105,7 @@ def execute_plan(
                     status=RuleMatchStatus.CREATED.value,
                     error=None,
                     response=response,
+                    placement_strategy=response.get("_placement_strategy"),
                 )
             )
         except Exception as exc:  # noqa: BLE001 - report FMC/API failures without rollback in v1.
@@ -115,6 +118,7 @@ def execute_plan(
                 status=RuleMatchStatus.CREATE_FAILED.value,
                 error=str(exc),
                 response=getattr(exc, "response_body", None),
+                placement_strategy=None,
             )
             created.append(failed)
             errors.append({"csv_order": match.csv_entry.order, "rule_name": match.csv_entry.rule_name, "error": str(exc)})

@@ -81,7 +81,7 @@ def render_commit_html(result: LayerComposerResult) -> str:
     rows = "".join(
         "<tr>"
         f"<td>{item.csv_order}</td><td>{_e(item.rule_name)}</td><td>{_e(item.status)}</td>"
-        f"<td>{_e(item.source_acp_name)}</td><td>{_e(item.target_rule_id or '')}</td><td>{_e(item.error or '')}</td>"
+        f"<td>{_e(item.source_acp_name)}</td><td>{_e(item.target_rule_id or '')}</td><td>{_e(item.placement_strategy or '')}</td><td>{_e(item.error or '')}</td>"
         "</tr>"
         for item in result.created_rules
     )
@@ -89,7 +89,7 @@ def render_commit_html(result: LayerComposerResult) -> str:
         "FMC Layer Composer Commit",
         [
             _section("Executive Summary", f"<p class='banner'>{_e(status)}</p>"),
-            _section("Created Rules", "<table><thead><tr><th>Order</th><th>Rule</th><th>Status</th><th>Source ACP</th><th>Target Rule ID</th><th>Error</th></tr></thead><tbody>" + rows + "</tbody></table>"),
+            _section("Created Rules", "<table><thead><tr><th>Order</th><th>Rule</th><th>Status</th><th>Source ACP</th><th>Target Rule ID</th><th>Placement Strategy</th><th>Error</th></tr></thead><tbody>" + rows + "</tbody></table>"),
             _section("Skipped Rules", f"<pre>{_e(json.dumps(result.skipped_rules, indent=2, default=str))}</pre>"),
             _section("API Failures", f"<pre>{_e(json.dumps(result.errors, indent=2, default=str))}</pre>"),
             _section("Raw JSON Summary", f"<pre>{_e(json.dumps(result_to_dict(result), indent=2, default=str)[:50000])}</pre>"),
@@ -262,7 +262,7 @@ def _write_conflicts_csv(path: Path, plan: LayerComposerPlan) -> None:
 
 def _write_created_csv(path: Path, result: LayerComposerResult) -> None:
     with path.open("w", newline="", encoding="utf-8") as handle:
-        writer = csv.DictWriter(handle, fieldnames=["csv_order", "rule_name", "source_acp_name", "source_rule_id", "target_rule_id", "status", "error"])
+        writer = csv.DictWriter(handle, fieldnames=["csv_order", "rule_name", "source_acp_name", "source_rule_id", "target_rule_id", "status", "placement_strategy", "error"])
         writer.writeheader()
         for item in result.created_rules:
             row = asdict(item)

@@ -40,6 +40,10 @@ def render_analysis(client: object | None, domain_uuid: str | None, selected_pol
     target_default = normalize_layer_name(upload.name)
     target_name = st.text_input("Target ACP name", value=st.session_state.get("target_acp_name", target_default))
     st.warning("The target ACP will be created only during commit. The tool will not deploy or assign devices.")
+    st.info(
+        "Rules will be created in the Mandatory section when supported by the FMC API. "
+        "The tool will not create custom rule categories/headers in v1."
+    )
 
     st.header("5. Analysis options")
     match_mode = st.selectbox("Match mode", [mode.value for mode in MatchMode])

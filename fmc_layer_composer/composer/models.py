@@ -118,7 +118,7 @@ class LayerComposerOptions:
     honor_csv_disabled: bool = True
     target_acp_name: str = ""
     default_action: str = "BLOCK"
-    rule_category: str = "Mandatory"
+    rule_section: str = "mandatory"
     stop_on_first_failure: bool = True
 
 
@@ -147,6 +147,7 @@ class CreatedRuleResult:
     status: str
     error: str | None
     response: dict[str, Any] | None
+    placement_strategy: str | None = None
 
 
 @dataclass

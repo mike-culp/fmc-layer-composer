@@ -13,7 +13,7 @@ It uses one exported Panorama/FMT layer CSV as the authoritative manifest for ru
 - Compares selected FMC rules to CSV expectations by human-readable names.
 - Generates self-contained HTML, JSON, and CSV dry-run reports.
 - On explicit commit, creates one new target ACP with default action `BLOCK`.
-- Copies selected source access rules sequentially into the Mandatory category.
+- Copies selected source access rules sequentially into the Mandatory section when supported by the FMC API.
 - Re-fetches each source rule immediately before copying.
 
 ## What it does not do
@@ -76,7 +76,7 @@ CSV-to-FMC structure differences are warnings by default. Source candidate signa
 
 ## Commit behavior
 
-Commit re-checks that the target ACP does not already exist, creates the target ACP only during commit, and copies rules one at a time in CSV order. Each source rule is re-fetched by ID immediately before copy, sanitized to remove FMC/server-managed fields, annotated with provenance in `newComments`, and posted to the target ACP Mandatory category.
+Commit re-checks that the target ACP does not already exist, creates the target ACP only during commit, and copies rules one at a time in CSV order. Each source rule is re-fetched by ID immediately before copy, sanitized to remove FMC/server-managed fields, annotated with provenance in `newComments`, and posted to the target ACP Mandatory section when supported by the FMC API. The tool does not create custom rule categories or headers in v1.
 
 By default, commit stops on the first create failure. It does not attempt rollback in v1.
 
