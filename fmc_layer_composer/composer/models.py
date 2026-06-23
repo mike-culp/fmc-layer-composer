@@ -73,6 +73,15 @@ class SourceRuleCandidate:
 
 
 @dataclass
+class CandidateFieldDelta:
+    field_path: str
+    severity: str
+    delta_type: str
+    values_by_candidate: dict[str, Any]
+    message: str
+
+
+@dataclass
 class SanityDelta:
     code: str
     severity: str
@@ -89,6 +98,10 @@ class LayerRuleMatch:
     candidates: list[SourceRuleCandidate]
     selected_candidate: SourceRuleCandidate | None
     candidate_deltas: list[dict[str, Any]]
+    candidate_field_deltas: list[CandidateFieldDelta]
+    semantic_candidate_delta_count: int
+    id_only_delta_count: int
+    blocking_candidate_delta_count: int
     sanity_deltas: list[SanityDelta]
     warnings: list[str]
     skip_reason: str | None

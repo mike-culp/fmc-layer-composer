@@ -103,6 +103,7 @@ def _render_plan(plan: object) -> None:
                 "candidate ACPs": ", ".join(candidate.source_acp_name for candidate in match.candidates),
                 "warnings": "; ".join(match.warnings),
                 "deltas": "; ".join(delta.code for delta in match.sanity_deltas),
+                "candidate deltas": _candidate_delta_preview(match),
                 "commit action": "create" if match.selected_candidate else "skip/block",
             }
         )
@@ -110,3 +111,13 @@ def _render_plan(plan: object) -> None:
     for label, path in getattr(plan, "report_paths", {}).items():
         with open(path, "rb") as handle:
             st.download_button(f"Download {label}", handle, file_name=path.split("/")[-1])
+
+
+def _candidate_delta_preview(match: object) -> str:
+    deltas = getattr(match, "candidate_field_deltas", [])
+    if not deltas:
+        return ""
+    fields = ", ".join(delta.field_path for delta in deltas[:3])
+    blocking = getattr(match, "blocking_candidate_delta_count", 0)
+    informational = len(deltas) - blocking
+    return f"{len(deltas)} candidate deltas: {fields} ({blocking} blocking, {informational} informational)"

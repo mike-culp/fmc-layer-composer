@@ -66,3 +66,23 @@ def test_candidate_delta_blocks_by_default_and_override_allows():
         options=options,
     )
     assert plan.commit_allowed
+
+
+def test_id_only_candidate_delta_does_not_block_plan():
+    acps = [SourceAcpRef("a", "High", 1), SourceAcpRef("b", "Low", 2)]
+    options = LayerComposerOptions(target_acp_name="target")
+    plan = build_plan(
+        csv_filename="x.csv",
+        entries=[entry()],
+        duplicate_rule_names=[],
+        source_acps=acps,
+        source_rules_by_acp={
+            "a": [{"id": "1", "name": "Rule A", "action": "ALLOW", "enabled": True, "sourceNetworks": {"objects": [{"name": "NET-A", "id": "id-1"}]}}],
+            "b": [{"id": "2", "name": "Rule A", "action": "ALLOW", "enabled": True, "sourceNetworks": {"objects": [{"name": "NET-A", "id": "id-2"}]}}],
+        },
+        options=options,
+    )
+    assert plan.commit_allowed
+    assert plan.matches[0].status == "MATCHED_IDENTICAL_MULTIPLE"
+    assert plan.matches[0].id_only_delta_count == 1
+    assert plan.matches[0].blocking_candidate_delta_count == 0

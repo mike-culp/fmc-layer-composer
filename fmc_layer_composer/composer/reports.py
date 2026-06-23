@@ -57,6 +57,7 @@ def render_dry_run_html(plan: LayerComposerPlan) -> str:
             f"<td>{_e(selected.source_acp_name if selected else '')}</td>"
             f"<td>{_e(', '.join(candidate.source_acp_name for candidate in match.candidates))}</td>"
             f"<td>{_e(', '.join(delta.code for delta in match.sanity_deltas))}</td>"
+            f"<td>{_e(_candidate_delta_preview(match))}</td>"
             f"<td>{_e('; '.join(match.warnings))}</td>"
             "</tr>"
         )
@@ -67,8 +68,9 @@ def render_dry_run_html(plan: LayerComposerPlan) -> str:
             _section("Source ACPs and Priority", _source_acps_table(plan)),
             _section("CSV Manifest Summary", f"<p>{len(plan.entries)} CSV rules from {_e(plan.csv_filename)}.</p>"),
             _section("Match Summary", _summary_table(plan.summary)),
+            _section("Candidate Delta Summary", _candidate_delta_summary(plan)),
             _section("Commit Readiness", _list("Blockers", plan.blockers) + _list("Warnings", plan.warnings)),
-            _section("Per-Rule Details", "<table><thead><tr><th>Order</th><th>Rule</th><th>Status</th><th>Selected ACP</th><th>Candidates</th><th>Deltas</th><th>Warnings</th></tr></thead><tbody>" + "".join(rows) + "</tbody></table>"),
+            _section("Per-Rule Details", "<table><thead><tr><th>Order</th><th>Rule</th><th>Status</th><th>Selected ACP</th><th>Candidates</th><th>CSV/FMC Deltas</th><th>Candidate Field Deltas</th><th>Warnings</th></tr></thead><tbody>" + "".join(rows) + "</tbody></table>" + _sanity_delta_tables(plan) + _candidate_field_delta_tables(plan)),
             _section("Raw JSON Summary", f"<pre>{_e(json.dumps(plan_to_dict(plan), indent=2, default=str)[:50000])}</pre>"),
         ],
     )
@@ -119,6 +121,79 @@ def _source_acps_table(plan: LayerComposerPlan) -> str:
     return "<table><thead><tr><th>Priority</th><th>Name</th><th>ID</th></tr></thead><tbody>" + rows + "</tbody></table>"
 
 
+def _candidate_delta_summary(plan: LayerComposerPlan) -> str:
+    return _summary_table(
+        {
+            "semantic candidate deltas": plan.summary.get("semantic_candidate_deltas", 0),
+            "ID-only candidate deltas": plan.summary.get("id_only_candidate_deltas", 0),
+            "ordering-only deltas": plan.summary.get("ordering_only_deltas", 0),
+            "empty/missing normalization deltas": plan.summary.get("empty_missing_normalization_deltas", 0),
+        }
+    )
+
+
+def _candidate_field_delta_tables(plan: LayerComposerPlan) -> str:
+    sections: list[str] = []
+    for match in plan.matches:
+        if not match.candidate_field_deltas:
+            continue
+        candidate_names = [candidate.source_acp_name for candidate in match.candidates]
+        header = "<tr><th>field</th><th>severity</th><th>delta type</th>"
+        header += "".join(f"<th>{_e(name)} value</th>" for name in candidate_names)
+        header += "<th>message</th></tr>"
+        rows = []
+        for delta in match.candidate_field_deltas:
+            row = f"<tr><td>{_e(delta.field_path)}</td><td>{_e(delta.severity)}</td><td>{_e(delta.delta_type)}</td>"
+            for name in candidate_names:
+                row += f"<td>{_e(json.dumps(delta.values_by_candidate.get(name), default=str))}</td>"
+            row += f"<td>{_e(delta.message)}</td></tr>"
+            rows.append(row)
+        sections.append(
+            f"<h3>Rule {match.csv_entry.order}: {_e(match.csv_entry.rule_name)} - Candidate Field Deltas</h3>"
+            "<table><thead>" + header + "</thead><tbody>" + "".join(rows) + "</tbody></table>"
+        )
+    if not sections:
+        return "<h3>Candidate Field Deltas</h3><p>None.</p>"
+    return "<h3>Candidate Field Deltas</h3>" + "".join(sections)
+
+
+def _sanity_delta_tables(plan: LayerComposerPlan) -> str:
+    sections: list[str] = []
+    for match in plan.matches:
+        if not match.sanity_deltas:
+            continue
+        rows = []
+        for delta in match.sanity_deltas:
+            rows.append(
+                "<tr>"
+                f"<td>{_e(delta.field)}</td>"
+                f"<td>{_e(delta.severity)}</td>"
+                f"<td>{_e(delta.code)}</td>"
+                f"<td>{_e(json.dumps(delta.csv_value, default=str))}</td>"
+                f"<td>{_e(json.dumps(delta.fmc_value, default=str))}</td>"
+                f"<td>{_e(delta.message)}</td>"
+                "</tr>"
+            )
+        sections.append(
+            f"<h3>Rule {match.csv_entry.order}: {_e(match.csv_entry.rule_name)} - CSV-to-FMC Sanity Deltas</h3>"
+            "<table><thead><tr><th>field</th><th>severity</th><th>code</th><th>CSV value</th><th>FMC value</th><th>message</th></tr></thead><tbody>"
+            + "".join(rows)
+            + "</tbody></table>"
+        )
+    if not sections:
+        return "<h3>CSV-to-FMC Sanity Deltas</h3><p>None.</p>"
+    return "<h3>CSV-to-FMC Sanity Deltas</h3>" + "".join(sections)
+
+
+def _candidate_delta_preview(match: Any) -> str:
+    if not match.candidate_field_deltas:
+        return ""
+    blocking = match.blocking_candidate_delta_count
+    informational = len(match.candidate_field_deltas) - blocking
+    fields = ", ".join(delta.field_path for delta in match.candidate_field_deltas[:3])
+    return f"{len(match.candidate_field_deltas)} candidate deltas ({blocking} blocking, {informational} informational): {fields}"
+
+
 def _list(title: str, items: list[str]) -> str:
     if not items:
         return f"<h3>{_e(title)}</h3><p>None.</p>"
@@ -165,8 +240,8 @@ def _write_conflicts_csv(path: Path, plan: LayerComposerPlan) -> None:
         writer = csv.DictWriter(handle, fieldnames=["csv_order", "rule_name", "candidate_deltas"])
         writer.writeheader()
         for match in plan.matches:
-            if match.candidate_deltas:
-                writer.writerow({"csv_order": match.csv_entry.order, "rule_name": match.csv_entry.rule_name, "candidate_deltas": json.dumps(match.candidate_deltas, default=str)})
+            if match.candidate_field_deltas:
+                writer.writerow({"csv_order": match.csv_entry.order, "rule_name": match.csv_entry.rule_name, "candidate_deltas": json.dumps([asdict(delta) for delta in match.candidate_field_deltas], default=str)})
 
 
 def _write_created_csv(path: Path, result: LayerComposerResult) -> None:

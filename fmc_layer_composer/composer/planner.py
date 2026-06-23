@@ -16,7 +16,12 @@ from .models import (
     SourceRuleCandidate,
 )
 from .sanity import compare_csv_to_rule_signature
-from .signatures import normalized_signature_json, signature_delta
+from .signatures import (
+    blocking_candidate_delta_count,
+    compare_candidate_signatures,
+    id_only_delta_count,
+    semantic_candidate_delta_count,
+)
 from .utils import safe_target_name
 
 
@@ -76,6 +81,10 @@ def _duplicate_match(entry: LayerCsvEntry, candidates: list[SourceRuleCandidate]
         candidates=candidates,
         selected_candidate=None,
         candidate_deltas=[],
+        candidate_field_deltas=[],
+        semantic_candidate_delta_count=0,
+        id_only_delta_count=0,
+        blocking_candidate_delta_count=0,
         sanity_deltas=[],
         warnings=["Duplicate CSV rule name after normalization."],
         skip_reason="Duplicate CSV rule names block deterministic copy order.",
@@ -90,6 +99,10 @@ def _missing_match(entry: LayerCsvEntry, skip_missing: bool) -> LayerRuleMatch:
         candidates=[],
         selected_candidate=None,
         candidate_deltas=[],
+        candidate_field_deltas=[],
+        semantic_candidate_delta_count=0,
+        id_only_delta_count=0,
+        blocking_candidate_delta_count=0,
         sanity_deltas=[],
         warnings=[],
         skip_reason="Missing rule skipped by option." if skip_missing else "No matching source rule found.",
@@ -102,30 +115,30 @@ def _candidate_match(
     options: LayerComposerOptions,
 ) -> LayerRuleMatch:
     selected = candidates[0]
-    signature_groups = {normalized_signature_json(candidate.signature) for candidate in candidates}
-    candidate_deltas: list[dict[str, Any]] = []
+    candidate_field_deltas = compare_candidate_signatures(candidates)
+    blocking_count = blocking_candidate_delta_count(candidate_field_deltas)
+    semantic_count = semantic_candidate_delta_count(candidate_field_deltas)
+    id_only_count = id_only_delta_count(candidate_field_deltas)
+    candidate_deltas = [
+        asdict(delta)
+        for delta in candidate_field_deltas
+        if delta.severity == "warning"
+    ]
     if len(candidates) == 1:
         status = RuleMatchStatus.MATCHED_ONE
-    elif len(signature_groups) == 1:
-        status = RuleMatchStatus.MATCHED_IDENTICAL_MULTIPLE
-    else:
+    elif blocking_count:
         status = RuleMatchStatus.MATCHED_MULTIPLE_WITH_DELTA
-        baseline = candidates[0]
-        for candidate in candidates[1:]:
-            delta = signature_delta(baseline.signature, candidate.signature)
-            if delta:
-                candidate_deltas.append(
-                    {
-                        "base_acp": baseline.source_acp_name,
-                        "candidate_acp": candidate.source_acp_name,
-                        "delta": delta,
-                    }
-                )
+    else:
+        status = RuleMatchStatus.MATCHED_IDENTICAL_MULTIPLE
 
     sanity_deltas = compare_csv_to_rule_signature(entry, selected.signature)
     warnings = [delta.message for delta in sanity_deltas]
-    if status == RuleMatchStatus.MATCHED_MULTIPLE_WITH_DELTA:
-        warnings.append("Multiple source candidates have different signatures.")
+    if blocking_count:
+        field_preview = ", ".join(delta.field_path for delta in candidate_field_deltas if delta.severity == "warning")
+        warnings.append(f"{blocking_count} blocking candidate field delta(s): {field_preview}.")
+    elif candidate_field_deltas:
+        info_count = len(candidate_field_deltas)
+        warnings.append(f"{info_count} informational candidate field delta(s); no semantic copy blocker.")
 
     return LayerRuleMatch(
         csv_entry=entry,
@@ -133,6 +146,10 @@ def _candidate_match(
         candidates=candidates,
         selected_candidate=selected,
         candidate_deltas=candidate_deltas,
+        candidate_field_deltas=candidate_field_deltas,
+        semantic_candidate_delta_count=semantic_count,
+        id_only_delta_count=id_only_count,
+        blocking_candidate_delta_count=blocking_count,
         sanity_deltas=sanity_deltas,
         warnings=warnings,
         skip_reason=None,
@@ -143,6 +160,11 @@ def _build_summary(matches: list[LayerRuleMatch]) -> dict[str, Any]:
     counts = Counter(match.status for match in matches)
     ready = sum(1 for match in matches if match.selected_candidate and match.status != RuleMatchStatus.CSV_DUPLICATE_RULE_NAME.value)
     warnings = sum(len(match.warnings) for match in matches)
+    field_delta_types = Counter(
+        delta.delta_type
+        for match in matches
+        for delta in match.candidate_field_deltas
+    )
     return {
         "total_csv_rules": len(matches),
         "matched_one": counts[RuleMatchStatus.MATCHED_ONE.value],
@@ -156,6 +178,10 @@ def _build_summary(matches: list[LayerRuleMatch]) -> dict[str, Any]:
         "failed": counts[RuleMatchStatus.CREATE_FAILED.value],
         "warnings": warnings,
         "blockers": 0,
+        "semantic_candidate_deltas": sum(match.semantic_candidate_delta_count for match in matches),
+        "id_only_candidate_deltas": field_delta_types["ID_ONLY_DIFFERENCE"],
+        "ordering_only_deltas": field_delta_types["ORDERING_ONLY_DIFFERENCE"],
+        "empty_missing_normalization_deltas": field_delta_types["EMPTY_MISSING_NORMALIZATION"],
     }
 
 
@@ -183,7 +209,7 @@ def _build_readiness(
 
     missing = [match for match in matches if match.status == RuleMatchStatus.MISSING.value]
     skipped = [match for match in matches if match.status == RuleMatchStatus.SKIPPED.value]
-    candidate_deltas = [match for match in matches if match.candidate_deltas]
+    candidate_deltas = [match for match in matches if match.blocking_candidate_delta_count]
     selected = [match for match in matches if match.selected_candidate]
     if entries and not selected:
         blockers.append("All CSV rules are missing from selected source ACPs.")
