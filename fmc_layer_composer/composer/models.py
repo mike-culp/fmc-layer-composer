@@ -266,6 +266,12 @@ class RuleCreateTask:
     is_multi_rule_override: bool
     multi_rule_part_number: int | None
     multi_rule_part_total: int | None
+    target_naming_mode: str = "AUTO"
+    custom_target_rule_name: str | None = None
+    target_rule_name_length: int = 0
+    target_rule_name_validation_status: str = "VALID"
+    target_rule_name_warning: str | None = None
+    target_rule_name_recommended_action: str | None = None
 
 
 @dataclass

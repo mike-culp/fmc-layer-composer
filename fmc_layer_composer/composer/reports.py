@@ -96,6 +96,7 @@ def render_dry_run_html(plan: LayerComposerPlan) -> str:
             _section("Missing/Fuzzy Candidate Details", _fuzzy_candidate_details(plan)),
             _section("Fuzzy Selected Rules", _fuzzy_selected_details(plan)),
             _section("Multi-Rule Overrides / FMT Split Rules", _multi_rule_override_details(plan)),
+            _section("Target Rule Name Validation", _target_name_validation_table(plan.resolved_plan_summary.get("target_rule_name_validation", []))),
             _section("Conflict Resolution Summary", _conflict_resolution_summary(plan)),
             _section("Skipped Rules", _skipped_details(plan)),
             _section("Candidate Delta Summary", _candidate_delta_summary(plan)),
@@ -122,6 +123,7 @@ def render_commit_html(result: LayerComposerResult) -> str:
             _section("Created Rules", "<table><thead><tr><th>Order</th><th>Rule</th><th>Status</th><th>Source ACP</th><th>Target Rule ID</th><th>Placement Strategy</th><th>Error</th></tr></thead><tbody>" + rows + "</tbody></table>"),
             _section("Multi-Rule Overrides / FMT Split Rules", _multi_rule_override_details(result.plan)),
             _section("Create Tasks", _create_tasks_table(result.create_tasks)),
+            _section("Target Rule Name Validation", _target_name_validation_table([_task_validation_record(task) for task in result.create_tasks])),
             _section("Skipped Rules", f"<pre>{_e(json.dumps(result.skipped_rules, indent=2, default=str))}</pre>"),
             _section("Post-Commit Verification", _verification_details(result)),
             _section("API Failures", f"<pre>{_e(json.dumps(result.errors, indent=2, default=str))}</pre>"),
@@ -297,11 +299,51 @@ def _create_tasks_table(tasks: list[Any]) -> str:
         "<tr>"
         f"<td>{task.task_order}</td><td>{task.csv_order}</td><td>{_e(task.csv_rule_name)}</td>"
         f"<td>{_e(task.source_acp_name)}</td><td>{_e(task.source_rule_name)}</td><td>{_e(task.target_rule_name)}</td>"
-        f"<td>{_e(task.is_multi_rule_override)}</td><td>{_e(task.multi_rule_part_number or '')}</td><td>{_e(task.multi_rule_part_total or '')}</td>"
+        f"<td>{_e(task.target_rule_name_length)}</td><td>{_e(task.target_naming_mode)}</td><td>{_e(task.target_rule_name_validation_status)}</td>"
+        f"<td>{_e(task.target_rule_name_warning or '')}</td><td>{_e(task.is_multi_rule_override)}</td><td>{_e(task.multi_rule_part_number or '')}</td><td>{_e(task.multi_rule_part_total or '')}</td>"
         "</tr>"
         for task in tasks
     )
-    return "<table><thead><tr><th>task</th><th>CSV order</th><th>CSV rule</th><th>source ACP</th><th>source rule</th><th>target rule</th><th>multi</th><th>part</th><th>total</th></tr></thead><tbody>" + rows + "</tbody></table>"
+    return "<table><thead><tr><th>task</th><th>CSV order</th><th>CSV rule</th><th>source ACP</th><th>source rule</th><th>target rule</th><th>target length</th><th>naming mode</th><th>validation</th><th>problem</th><th>multi</th><th>part</th><th>total</th></tr></thead><tbody>" + rows + "</tbody></table>"
+
+
+def _target_name_validation_table(records: list[dict[str, Any]]) -> str:
+    if not records:
+        return "<p>None.</p>"
+    rows = []
+    for record in records:
+        rows.append(
+            "<tr>"
+            f"<td>{_e(record.get('csv_order'))}</td>"
+            f"<td>{_e(record.get('csv_rule_name'))}</td>"
+            f"<td>{_e(record.get('csv_rule_name_length'))}</td>"
+            f"<td>{_e(record.get('source_rule_name'))}</td>"
+            f"<td>{_e(record.get('target_rule_name'))}</td>"
+            f"<td>{_e(record.get('target_rule_name_length'))}</td>"
+            f"<td>{_e(record.get('naming_mode'))}</td>"
+            f"<td>{_e(record.get('custom_target_rule_name', ''))}</td>"
+            f"<td>{_e(record.get('validation_status'))}</td>"
+            f"<td>{_e(record.get('problem', ''))}</td>"
+            f"<td>{_e(record.get('recommended_action', ''))}</td>"
+            "</tr>"
+        )
+    return "<table><thead><tr><th>CSV order</th><th>CSV rule name</th><th>CSV rule name length</th><th>source rule name</th><th>target rule name</th><th>target name length</th><th>naming mode</th><th>custom target rule name</th><th>validation status</th><th>problem</th><th>recommended action</th></tr></thead><tbody>" + "".join(rows) + "</tbody></table>"
+
+
+def _task_validation_record(task: Any) -> dict[str, Any]:
+    return {
+        "csv_order": task.csv_order,
+        "csv_rule_name": task.csv_rule_name,
+        "csv_rule_name_length": len(task.csv_rule_name or ""),
+        "source_rule_name": task.source_rule_name,
+        "target_rule_name": task.target_rule_name,
+        "target_rule_name_length": task.target_rule_name_length,
+        "naming_mode": task.target_naming_mode,
+        "custom_target_rule_name": task.custom_target_rule_name or "",
+        "validation_status": task.target_rule_name_validation_status,
+        "problem": task.target_rule_name_warning or "",
+        "recommended_action": task.target_rule_name_recommended_action or "",
+    }
 
 
 def _skipped_details(plan: LayerComposerPlan) -> str:
@@ -559,10 +601,12 @@ def _write_multi_rule_overrides_csv(path: Path, plan: LayerComposerPlan) -> None
 
 def _write_create_tasks_csv(path: Path, plan: LayerComposerPlan) -> None:
     with path.open("w", newline="", encoding="utf-8") as handle:
-        writer = csv.DictWriter(handle, fieldnames=["task_order", "csv_order", "csv_rule_name", "source_acp_name", "source_rule_name", "source_rule_id", "target_rule_name", "is_multi_rule_override", "multi_rule_part_number", "multi_rule_part_total", "selection_method"])
+        writer = csv.DictWriter(handle, fieldnames=["task_order", "csv_order", "csv_rule_name", "csv_rule_name_length", "source_acp_name", "source_rule_name", "source_rule_id", "target_rule_name", "target_rule_name_length", "target_naming_mode", "custom_target_rule_name", "target_rule_name_validation_status", "target_rule_name_warning", "target_rule_name_recommended_action", "is_multi_rule_override", "multi_rule_part_number", "multi_rule_part_total", "selection_method"])
         writer.writeheader()
         for task in plan.resolved_plan_summary.get("create_tasks", []):
-            writer.writerow({field: task.get(field) for field in writer.fieldnames})
+            row = {field: task.get(field) for field in writer.fieldnames}
+            row["csv_rule_name_length"] = len(str(task.get("csv_rule_name") or ""))
+            writer.writerow(row)
 
 
 def _dry_run_json_payload(plan: LayerComposerPlan) -> dict[str, Any]:

@@ -13,6 +13,7 @@ from .models import (
     RuleMatchStatus,
     SourceRuleCandidate,
 )
+from .naming import FMC_ACCESS_RULE_NAME_MAX_LENGTH, get_rule_name_length_warning, is_valid_fmc_rule_name, rule_name_length
 from .state import make_rule_key
 
 
@@ -42,6 +43,7 @@ def initialize_resolution_state(plan: LayerComposerPlan, existing: dict[str, dic
                 "skip": False,
                 "target_naming_mode": "AUTO",
                 "rename_to_csv_rule_name": True,
+                "custom_target_rule_names": {},
                 "selection_method": None,
                 "notes": "",
             },
@@ -82,9 +84,16 @@ def apply_resolution_state_to_plan(
             if selected_fuzzy:
                 match.selected_fuzzy_candidate = selected_fuzzy
                 match.selected_candidate = _source_from_fuzzy(selected_fuzzy)
-                rename = bool(decision.get("rename_to_csv_rule_name", True))
-                match.rename_to_csv_rule_name = rename and selected_fuzzy.candidate_rule_name != match.csv_entry.rule_name
-                match.target_rule_name = match.csv_entry.rule_name if rename else selected_fuzzy.candidate_rule_name
+                target_mode = decision.get("target_naming_mode") or "AUTO"
+                custom_name = _custom_target_name_for_selected(decision, selected_fuzzy.source_acp_id, selected_fuzzy.source_rule_id)
+                match.target_rule_name = custom_name or _target_rule_name(
+                    match.csv_entry.rule_name,
+                    selected_fuzzy.candidate_rule_name,
+                    target_mode,
+                    1,
+                    1,
+                )
+                match.rename_to_csv_rule_name = match.target_rule_name == match.csv_entry.rule_name and selected_fuzzy.candidate_rule_name != match.csv_entry.rule_name
                 match.status = RuleMatchStatus.FUZZY_SELECTED_RENAMED_TO_CSV.value if match.rename_to_csv_rule_name else RuleMatchStatus.FUZZY_SELECTED.value
                 match.primary_reason_code = "FUZZY_SELECTED_BY_USER"
                 match.human_reason = "Fuzzy source candidate selected for copy."
@@ -105,13 +114,20 @@ def apply_resolution_state_to_plan(
     summary["expected_create_operations"] = len(create_tasks)
     summary["multi_rule_overrides"] = sum(1 for match in resolved.matches if match.status in {RuleMatchStatus.MULTI_RULE_OVERRIDE_READY.value, RuleMatchStatus.MULTI_RULE_OVERRIDE_RENAMED.value, RuleMatchStatus.MULTI_RULE_OVERRIDE_PRESERVE_SOURCE_NAMES.value})
     summary["create_tasks"] = [asdict(task) for task in create_tasks]
+    summary["target_rule_name_validation"] = [_target_name_validation_record(task) for task in create_tasks]
+    summary["invalid_target_rule_names"] = sum(1 for task in create_tasks if task.target_rule_name_validation_status != "VALID")
     resolved.summary.update(summary)
+    resolved.resolved_plan_summary = summary
     resolved.commit_allowed = not blockers
     resolved.blockers = blockers
     return ResolvedLayerComposerPlan(plan=resolved, summary=summary, commit_allowed=not blockers, blockers=blockers, warnings=resolved.warnings)
 
 
-def build_create_tasks(plan: LayerComposerPlan, resolution_state: dict[str, dict[str, Any]] | None = None) -> tuple[list[RuleCreateTask], list[str]]:
+def build_create_tasks(
+    plan: LayerComposerPlan,
+    resolution_state: dict[str, dict[str, Any]] | None = None,
+    diagnostics_logger: Any | None = None,
+) -> tuple[list[RuleCreateTask], list[str]]:
     tasks: list[RuleCreateTask] = []
     blockers: list[str] = []
     task_order = 1
@@ -138,9 +154,28 @@ def build_create_tasks(plan: LayerComposerPlan, resolution_state: dict[str, dict
         target_naming_mode = decision.get("target_naming_mode") or "AUTO"
         if len(selected_rules) > 1 and target_naming_mode == "CSV_NAME":
             blockers.append(f"CSV_NAME target naming cannot be used for multi-rule override at CSV order {match.csv_entry.order}.")
+            _record_name_diagnostic(
+                diagnostics_logger,
+                "TARGET_NAME_VALIDATION_FAILED",
+                {"csv_order": match.csv_entry.order, "problem": "CSV_NAME cannot be used for multi-rule override."},
+            )
             continue
         for part_number, selected in enumerate(sorted(selected_rules, key=lambda item: int(item.get("selection_order", 1))), start=1):
-            target_name = _target_rule_name(match.csv_entry.rule_name, selected["source_rule_name"], target_naming_mode, len(selected_rules), part_number)
+            candidate_key_value = selected.get("candidate_key") or f"{selected.get('source_acp_id')}:{selected.get('source_rule_id')}"
+            custom_target_name = _custom_target_name_for_key(decision, candidate_key_value, str(selected.get("source_rule_id", "")))
+            target_name = custom_target_name or _target_rule_name(match.csv_entry.rule_name, selected["source_rule_name"], target_naming_mode, len(selected_rules), part_number)
+            if custom_target_name:
+                _record_name_diagnostic(
+                    diagnostics_logger,
+                    "CUSTOM_TARGET_NAME_SET",
+                    {"csv_order": match.csv_entry.order, "source_rule_name": selected["source_rule_name"], "target_rule_name": custom_target_name},
+                )
+            elif target_naming_mode == "AUTO" and target_name == selected["source_rule_name"] and match.csv_entry.rule_name != selected["source_rule_name"]:
+                _record_name_diagnostic(
+                    diagnostics_logger,
+                    "TARGET_NAME_MODE_AUTO_PRESERVE_SOURCE",
+                    {"csv_order": match.csv_entry.order, "csv_rule_name": match.csv_entry.rule_name, "source_rule_name": selected["source_rule_name"]},
+                )
             task = RuleCreateTask(
                 csv_order=match.csv_entry.order,
                 csv_rule_name=match.csv_entry.rule_name,
@@ -154,9 +189,20 @@ def build_create_tasks(plan: LayerComposerPlan, resolution_state: dict[str, dict
                 is_multi_rule_override=len(selected_rules) > 1,
                 multi_rule_part_number=part_number if len(selected_rules) > 1 else None,
                 multi_rule_part_total=len(selected_rules) if len(selected_rules) > 1 else None,
+                target_naming_mode=target_naming_mode,
+                custom_target_rule_name=custom_target_name,
             )
+            _validate_task_target_name(task, blockers, diagnostics_logger)
             if target_name in target_names:
+                task.target_rule_name_validation_status = "ERROR"
+                task.target_rule_name_warning = f"Duplicate target rule name '{target_name}' in create queue."
+                task.target_rule_name_recommended_action = "Choose a unique custom target rule name."
                 blockers.append(f"Duplicate target rule name '{target_name}' from CSV order {match.csv_entry.order}.")
+                _record_name_diagnostic(
+                    diagnostics_logger,
+                    "TARGET_NAME_VALIDATION_FAILED",
+                    {"csv_order": match.csv_entry.order, "target_rule_name": target_name, "problem": task.target_rule_name_warning},
+                )
             target_names[target_name] = task
             tasks.append(task)
             task_order += 1
@@ -274,7 +320,86 @@ def _target_rule_name(csv_rule_name: str, source_rule_name: str, mode: str, tota
         return source_rule_name
     if mode == "PRESERVE_SOURCE_NAMES":
         return source_rule_name
+    if mode == "AUTO" and not is_valid_fmc_rule_name(csv_rule_name):
+        return source_rule_name
     return csv_rule_name
+
+
+def default_target_naming_mode(csv_rule_name: str, selected_rule_count: int) -> str:
+    if selected_rule_count > 1:
+        return "PRESERVE_SOURCE_NAMES"
+    return "CSV_NAME" if is_valid_fmc_rule_name(csv_rule_name) else "PRESERVE_SOURCE_NAMES"
+
+
+def csv_name_mode_disabled_reason(csv_rule_name: str, selected_rule_count: int) -> str | None:
+    if selected_rule_count > 1:
+        return "Use CSV rule name is not valid for multi-rule overrides."
+    warning = get_rule_name_length_warning(csv_rule_name)
+    if warning:
+        return warning
+    return None
+
+
+def _validate_task_target_name(task: RuleCreateTask, blockers: list[str], diagnostics_logger: Any | None) -> None:
+    task.target_rule_name_length = rule_name_length(task.target_rule_name)
+    warning = get_rule_name_length_warning(task.target_rule_name)
+    if not warning:
+        task.target_rule_name_validation_status = "VALID"
+        task.target_rule_name_warning = None
+        task.target_rule_name_recommended_action = None
+        return
+    task.target_rule_name_validation_status = "ERROR"
+    if not task.target_rule_name:
+        task.target_rule_name_warning = "Target rule name is empty."
+    else:
+        task.target_rule_name_warning = f"Target rule name is {task.target_rule_name_length} characters; FMC maximum is {FMC_ACCESS_RULE_NAME_MAX_LENGTH}."
+    task.target_rule_name_recommended_action = "Use Preserve source rule name or choose a shorter custom target name."
+    blockers.append(f"CSV order {task.csv_order}: {task.target_rule_name_warning}")
+    _record_name_diagnostic(
+        diagnostics_logger,
+        "TARGET_NAME_TOO_LONG" if task.target_rule_name else "TARGET_NAME_VALIDATION_FAILED",
+        {
+            "csv_order": task.csv_order,
+            "csv_rule_name": task.csv_rule_name,
+            "source_rule_name": task.source_rule_name,
+            "target_rule_name": task.target_rule_name,
+            "target_rule_name_length": task.target_rule_name_length,
+            "problem": task.target_rule_name_warning,
+        },
+    )
+
+
+def _custom_target_name_for_selected(decision: dict[str, Any], source_acp_id: str, source_rule_id: str) -> str | None:
+    return _custom_target_name_for_key(decision, f"{source_acp_id}:{source_rule_id}", source_rule_id)
+
+
+def _custom_target_name_for_key(decision: dict[str, Any], candidate_key_value: str, source_rule_id: str) -> str | None:
+    custom_names = decision.get("custom_target_rule_names") or {}
+    value = custom_names.get(candidate_key_value) or custom_names.get(source_rule_id) or decision.get("custom_target_rule_name")
+    value = str(value).strip() if value is not None else ""
+    return value or None
+
+
+def _record_name_diagnostic(diagnostics_logger: Any | None, event_type: str, payload: dict[str, Any]) -> None:
+    if not diagnostics_logger:
+        return
+    diagnostics_logger.event(event_type, payload)
+
+
+def _target_name_validation_record(task: RuleCreateTask) -> dict[str, Any]:
+    return {
+        "csv_order": task.csv_order,
+        "csv_rule_name": task.csv_rule_name,
+        "csv_rule_name_length": rule_name_length(task.csv_rule_name),
+        "source_rule_name": task.source_rule_name,
+        "target_rule_name": task.target_rule_name,
+        "target_rule_name_length": task.target_rule_name_length,
+        "naming_mode": task.target_naming_mode,
+        "custom_target_rule_name": task.custom_target_rule_name or "",
+        "validation_status": task.target_rule_name_validation_status,
+        "problem": task.target_rule_name_warning or "",
+        "recommended_action": task.target_rule_name_recommended_action or "",
+    }
 
 
 def _rule_index(rule: dict[str, Any]) -> int:

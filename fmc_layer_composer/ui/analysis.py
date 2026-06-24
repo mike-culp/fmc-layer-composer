@@ -8,8 +8,9 @@ import streamlit as st
 
 from fmc_layer_composer.composer.csv_parser import CsvValidationError, parse_layer_csv
 from fmc_layer_composer.composer.models import LayerComposerOptions, MatchMode, SourceAcpRef
+from fmc_layer_composer.composer.naming import FMC_ACCESS_RULE_NAME_MAX_LENGTH, get_rule_name_length_warning, rule_name_length
 from fmc_layer_composer.composer.planner import build_plan
-from fmc_layer_composer.composer.resolution import apply_resolution_state_to_plan, candidate_key, initialize_resolution_state
+from fmc_layer_composer.composer.resolution import apply_resolution_state_to_plan, candidate_key, csv_name_mode_disabled_reason, default_target_naming_mode, initialize_resolution_state
 from fmc_layer_composer.composer.reports import write_dry_run_report
 from fmc_layer_composer.composer.state import build_plan_signature, sha256_bytes, make_rule_key
 from fmc_layer_composer.composer.utils import normalize_layer_name
@@ -314,12 +315,59 @@ def _render_fuzzy_resolution(plan: object) -> None:
                 current_state["decision"] = "USE_MULTI_RULE_OVERRIDE" if len(selected_multi_keys) > 1 else "USE_SELECTED_FUZZY_CANDIDATE"
                 current_state["multi_rule_override"] = len(selected_multi_keys) > 1
                 current_state["skip"] = False
+            selected_count = len(selected_multi_keys) if selected_multi_keys else (1 if current_state.get("selected_candidate_key") else 0)
+            if current_state.get("target_naming_mode") in {None, "AUTO"} and selected_count:
+                current_state["target_naming_mode"] = default_target_naming_mode(match.csv_entry.rule_name, selected_count)
+            mode_options = ["AUTO", "CSV_NAME", "PRESERVE_SOURCE_NAMES", "CSV_NAME_WITH_PART_SUFFIX"]
+            mode_labels = {
+                "AUTO": "Auto",
+                "CSV_NAME": "Use CSV rule name",
+                "PRESERVE_SOURCE_NAMES": "Preserve source rule name",
+                "CSV_NAME_WITH_PART_SUFFIX": "CSV rule name with part suffix",
+            }
+            current_mode = current_state.get("target_naming_mode", "AUTO")
+            if current_mode not in mode_options:
+                current_mode = "AUTO"
             current_state["target_naming_mode"] = st.selectbox(
                 "Target naming mode",
-                ["AUTO", "CSV_NAME", "PRESERVE_SOURCE_NAMES", "CSV_NAME_WITH_PART_SUFFIX"],
-                index=["AUTO", "CSV_NAME", "PRESERVE_SOURCE_NAMES", "CSV_NAME_WITH_PART_SUFFIX"].index(current_state.get("target_naming_mode", "AUTO")),
+                mode_options,
+                index=mode_options.index(current_mode),
+                format_func=lambda value: mode_labels[value],
                 key=f"target_naming_mode_{st.session_state.get('analysis_plan_id')}_{match.csv_entry.order}_{match.csv_entry.rule_name}",
             )
+            csv_name_warning = get_rule_name_length_warning(match.csv_entry.rule_name)
+            if csv_name_warning:
+                st.warning(
+                    f"CSV rule name is {rule_name_length(match.csv_entry.rule_name)} characters. "
+                    f"FMC rule names must be {FMC_ACCESS_RULE_NAME_MAX_LENGTH} characters or fewer. "
+                    "The target rule will preserve the selected source rule name unless you choose another valid naming mode."
+                )
+            disabled_reason = csv_name_mode_disabled_reason(match.csv_entry.rule_name, selected_count)
+            if current_state["target_naming_mode"] == "CSV_NAME" and disabled_reason:
+                st.error(disabled_reason)
+            if current_state["target_naming_mode"] == "CSV_NAME_WITH_PART_SUFFIX" and selected_count <= 1:
+                st.warning("CSV rule name with part suffix is intended for multi-rule overrides.")
+
+            custom_names = dict(current_state.get("custom_target_rule_names") or {})
+            selected_source_rules = current_state.get("selected_source_rules") or []
+            if selected_source_rules:
+                with st.expander("Advanced target rule names"):
+                    for selected in selected_source_rules:
+                        key = selected.get("candidate_key") or f"{selected.get('source_acp_id')}:{selected.get('source_rule_id')}"
+                        value = st.text_input(
+                            f"Custom target rule name for {selected.get('source_rule_name')}",
+                            value=str(custom_names.get(key, "")),
+                            max_chars=FMC_ACCESS_RULE_NAME_MAX_LENGTH + 50,
+                            key=f"custom_target_name_{st.session_state.get('analysis_plan_id')}_{match.csv_entry.order}_{selected.get('source_rule_id')}",
+                        )
+                        if value.strip():
+                            custom_names[key] = value.strip()
+                            warning = get_rule_name_length_warning(value.strip())
+                            if warning:
+                                st.error(warning)
+                        else:
+                            custom_names.pop(key, None)
+                    current_state["custom_target_rule_names"] = custom_names
             current = current_state.get("selected_candidate_key")
             if current_state.get("skip"):
                 current = "__skip__"
@@ -347,7 +395,6 @@ def _render_fuzzy_resolution(plan: object) -> None:
                         "selection_method": "USER_SELECTED",
                     }
                 )
-            current_state["rename_to_csv_rule_name"] = st.checkbox("Rename target rule to CSV rule name", value=bool(current_state.get("rename_to_csv_rule_name", True)), key=f"rename_to_csv_{st.session_state.get('analysis_plan_id')}_{match.csv_entry.order}_{match.csv_entry.rule_name}")
             current_state["notes"] = st.text_input("Notes", value=str(current_state.get("notes", "")), key=f"notes_{st.session_state.get('analysis_plan_id')}_{match.csv_entry.order}_{match.csv_entry.rule_name}")
             state[rule_key] = current_state
             st.session_state["resolution_state"] = state

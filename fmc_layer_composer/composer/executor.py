@@ -85,7 +85,7 @@ def execute_plan(
     skipped: list[dict[str, Any]] = []
     failed: CreatedRuleResult | None = None
     errors: list[dict[str, Any]] = []
-    create_tasks, task_blockers = build_create_tasks(plan, plan.resolution_state)
+    create_tasks, task_blockers = build_create_tasks(plan, plan.resolution_state, diagnostics_logger=diagnostics_logger)
     if task_blockers:
         raise ValueError("Create task validation failed: " + "; ".join(task_blockers))
 
