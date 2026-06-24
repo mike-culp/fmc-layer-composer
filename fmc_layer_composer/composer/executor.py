@@ -242,6 +242,13 @@ def _counts(names: list[str]) -> dict[str, int]:
 
 
 def _skipped_rule_record(match: Any) -> dict[str, Any]:
+    if match.skip_reason_detail:
+        detail = asdict(match.skip_reason_detail)
+        detail["rule_name"] = detail["csv_rule_name"]
+        detail["status"] = match.status
+        detail["skip_reason"] = detail["human_reason"]
+        detail["source_candidate_summary"] = detail["exact_candidates_found"]
+        return detail
     return {
         "csv_order": match.csv_entry.order,
         "rule_name": match.csv_entry.rule_name,

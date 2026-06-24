@@ -16,11 +16,12 @@ def find_fuzzy_rule_candidates(
 ) -> list[FuzzyRuleCandidate]:
     if not options.enabled:
         return []
+    threshold = getattr(options, "min_score", None) or options.threshold
     candidates: list[FuzzyRuleCandidate] = []
     normalized_csv = normalize_fuzzy_name(csv_rule_name)
     artifact_csv = artifact_base_name(csv_rule_name)
     for source_rule in source_rules:
-        fuzzy = _score_candidate(csv_rule_name, normalized_csv, artifact_csv, source_rule, options.threshold)
+        fuzzy = _score_candidate(csv_rule_name, normalized_csv, artifact_csv, source_rule, threshold, options)
         if fuzzy:
             candidates.append(fuzzy)
     return sorted(
@@ -51,6 +52,7 @@ def _score_candidate(
     artifact_csv: str,
     source_rule: SourceRuleCandidate,
     threshold: float,
+    options: FuzzyMatchOptions,
 ) -> FuzzyRuleCandidate | None:
     candidate_name = source_rule.rule_name
     normalized_candidate = normalize_fuzzy_name(candidate_name)
@@ -59,30 +61,32 @@ def _score_candidate(
     tier = ""
     score = 0.0
 
-    if artifact_csv == artifact_candidate and normalized_csv != normalized_candidate:
+    if options.include_artifact_suffix_matches and artifact_csv == artifact_candidate and normalized_csv != normalized_candidate:
         tier = "ARTIFACT_SUFFIX"
         score = 0.97
         reasons.extend(_artifact_reasons(candidate_name))
-    elif normalized_csv == normalized_candidate:
+    elif options.include_case_whitespace_matches and normalized_csv == normalized_candidate:
         tier = "NORMALIZED_EXACT"
         score = _normalized_exact_score(csv_rule_name, candidate_name, reasons)
-    elif normalized_candidate.startswith(normalized_csv) or normalized_csv.startswith(normalized_candidate):
+    elif options.include_prefix_suffix_matches and (normalized_candidate.startswith(normalized_csv) or normalized_csv.startswith(normalized_candidate)):
         tier = "TOKEN_PREFIX_SUFFIX"
         score = 0.88
         reasons.append("PREFIX_MATCH")
-    elif normalized_candidate.endswith(normalized_csv) or normalized_csv.endswith(normalized_candidate):
+    elif options.include_prefix_suffix_matches and (normalized_candidate.endswith(normalized_csv) or normalized_csv.endswith(normalized_candidate)):
         tier = "TOKEN_PREFIX_SUFFIX"
         score = 0.86
         reasons.append("SUFFIX_MATCH")
-    elif normalized_csv in normalized_candidate or normalized_candidate in normalized_csv:
+    elif options.include_prefix_suffix_matches and (normalized_csv in normalized_candidate or normalized_candidate in normalized_csv):
         tier = "TOKEN_PREFIX_SUFFIX"
         score = 0.84
         reasons.append("CONTAINS_MATCH")
-    elif _tokens(normalized_csv) == _tokens(normalized_candidate):
+    elif options.include_token_similarity_matches and _tokens(normalized_csv) == _tokens(normalized_candidate):
         tier = "TOKEN_PREFIX_SUFFIX"
         score = 0.80
         reasons.append("TOKEN_SET_MATCH")
     else:
+        if not options.include_difflib_similarity_matches:
+            return None
         score = difflib.SequenceMatcher(None, normalized_csv, normalized_candidate).ratio()
         if score < threshold:
             return None

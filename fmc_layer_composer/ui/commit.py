@@ -12,10 +12,22 @@ def render_commit(client: object | None, domain_uuid: str | None, plan: object |
     if not plan:
         st.info("Run a dry run first.")
         return
-    st.write({"Commit allowed": plan.commit_allowed, "Rules to create": plan.summary.get("ready_to_copy"), "Rules to skip": plan.summary.get("skipped")})
+    st.write(
+        {
+            "Commit allowed": plan.commit_allowed,
+            "CSV rules": plan.summary.get("total_csv_rules"),
+            "Exact ready": plan.summary.get("exact_ready", plan.summary.get("exact_matched")),
+            "Fuzzy selected": plan.summary.get("fuzzy_selected"),
+            "Priority overrides selected": plan.summary.get("priority_overrides_selected", 0),
+            "Skipped": plan.summary.get("skipped"),
+            "Unresolved": plan.summary.get("unresolved"),
+            "Blocked": plan.summary.get("blocked", len(plan.blockers)),
+            "Expected creates": plan.summary.get("expected_creates", plan.summary.get("ready_to_copy")),
+        }
+    )
     if plan.blockers:
         st.error("\n".join(plan.blockers))
-    confirmed = st.checkbox("I understand this will create a new ACP and copy rules into it. It will not deploy.")
+    confirmed = st.checkbox("I understand this will create a new ACP and copy the resolved rules into it. It will not deploy.")
     if st.button("Commit", disabled=not (plan.commit_allowed and confirmed), type="primary"):
         with st.spinner("Creating target ACP and copying rules"):
             result = execute_plan(

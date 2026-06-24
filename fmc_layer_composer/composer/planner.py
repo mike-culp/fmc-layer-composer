@@ -12,6 +12,7 @@ from .models import (
     LayerComposerPlan,
     LayerCsvEntry,
     LayerRuleMatch,
+    RuleSkipReason,
     RuleMatchStatus,
     SourceAcpRef,
     FuzzyRuleCandidate,
@@ -101,6 +102,19 @@ def _duplicate_match(entry: LayerCsvEntry, candidates: list[SourceRuleCandidate]
         human_reason="Duplicate CSV rule names block deterministic copy order.",
         user_decision="BLOCKED",
         commit_impact="Rule was not copied.",
+        skip_reason_detail=_skip_reason_detail(
+            entry=entry,
+            status="SKIPPED",
+            reason_code="CSV_DUPLICATE_RULE_NAME",
+            human_reason="Duplicate CSV rule names block deterministic copy order.",
+            source_acps=[],
+            exact_candidates=candidates,
+            fuzzy_candidates=[],
+            selected_candidate=None,
+            user_decision="BLOCKED",
+            commit_impact="Rule was not copied.",
+            warnings=["Duplicate CSV rule name after normalization."],
+        ),
     )
 
 
@@ -173,6 +187,19 @@ def _missing_match(
         human_reason=human_reason,
         user_decision=user_decision,
         commit_impact="Rule was not copied." if status.value.startswith("SKIPPED") else "Commit is blocked until this rule is resolved or skipped.",
+        skip_reason_detail=_skip_reason_detail(
+            entry=entry,
+            status="SKIPPED" if status.value.startswith("SKIPPED") else status.value,
+            reason_code=reason_code,
+            human_reason=human_reason,
+            source_acps=source_acps,
+            exact_candidates=[],
+            fuzzy_candidates=fuzzy_candidates,
+            selected_candidate=None,
+            user_decision=user_decision,
+            commit_impact="Rule was not copied." if status.value.startswith("SKIPPED") else "Commit is blocked until this rule is resolved or skipped.",
+            warnings=[],
+        ),
     )
 
 
@@ -324,6 +351,7 @@ def _selected_fuzzy(
         return next((candidate for candidate in fuzzy_candidates if _fuzzy_key(candidate) == selected_key), None)
     if (
         options.fuzzy.auto_accept_single_deterministic_artifact
+        or options.fuzzy.auto_select_single_artifact_match
         and len(fuzzy_candidates) == 1
         and fuzzy_candidates[0].match_tier == "ARTIFACT_SUFFIX"
         and not fuzzy_candidates[0].blocking_candidate_deltas
@@ -379,4 +407,48 @@ def _record_fuzzy_diagnostic(
             "candidate_ranking_details": [asdict(candidate) for candidate in match.fuzzy_candidates],
             "final_decision": match.user_decision,
         },
+    )
+
+
+def _skip_reason_detail(
+    *,
+    entry: LayerCsvEntry,
+    status: str,
+    reason_code: str,
+    human_reason: str,
+    source_acps: list[SourceAcpRef],
+    exact_candidates: list[SourceRuleCandidate],
+    fuzzy_candidates: list[FuzzyRuleCandidate],
+    selected_candidate: dict[str, Any] | None,
+    user_decision: str,
+    commit_impact: str,
+    warnings: list[str],
+) -> RuleSkipReason:
+    return RuleSkipReason(
+        csv_order=entry.order,
+        csv_rule_name=entry.rule_name,
+        final_status=status,
+        primary_reason_code=reason_code,
+        human_reason=human_reason,
+        match_mode_used="exact + artifact_fuzzy",
+        source_acps_searched=[acp.name for acp in source_acps],
+        exact_candidates_found=[
+            {"rule_name": candidate.rule_name, "source_acp_name": candidate.source_acp_name, "source_rule_id": candidate.rule_id}
+            for candidate in exact_candidates
+        ],
+        fuzzy_candidates_found=[
+            {
+                "rule_name": candidate.candidate_rule_name,
+                "source_acp_name": candidate.source_acp_name,
+                "source_rule_id": candidate.source_rule_id,
+                "score": candidate.score,
+                "match_tier": candidate.match_tier,
+                "match_reasons": candidate.match_reasons,
+            }
+            for candidate in fuzzy_candidates
+        ],
+        selected_candidate=selected_candidate,
+        user_decision=user_decision,
+        commit_impact=commit_impact,
+        blockers_or_warnings=warnings,
     )

@@ -85,7 +85,14 @@ class SourceRuleCandidate:
 class FuzzyMatchOptions:
     enabled: bool = True
     threshold: float = 0.72
+    min_score: float = 0.72
+    include_artifact_suffix_matches: bool = True
+    include_case_whitespace_matches: bool = True
+    include_prefix_suffix_matches: bool = True
+    include_token_similarity_matches: bool = True
+    include_difflib_similarity_matches: bool = True
     auto_accept_single_deterministic_artifact: bool = False
+    auto_select_single_artifact_match: bool = False
 
 
 @dataclass
@@ -129,6 +136,23 @@ class SanityDelta:
 
 
 @dataclass
+class RuleSkipReason:
+    csv_order: int
+    csv_rule_name: str
+    final_status: str
+    primary_reason_code: str
+    human_reason: str
+    match_mode_used: str
+    source_acps_searched: list[str]
+    exact_candidates_found: list[dict[str, Any]]
+    fuzzy_candidates_found: list[dict[str, Any]]
+    selected_candidate: dict[str, Any] | None
+    user_decision: str
+    commit_impact: str
+    blockers_or_warnings: list[str]
+
+
+@dataclass
 class LayerRuleMatch:
     csv_entry: LayerCsvEntry
     status: str
@@ -150,6 +174,7 @@ class LayerRuleMatch:
     commit_impact: str | None = None
     target_rule_name: str | None = None
     rename_to_csv_rule_name: bool = False
+    skip_reason_detail: RuleSkipReason | None = None
 
 
 @dataclass
@@ -182,6 +207,9 @@ class LayerComposerPlan:
     commit_allowed: bool
     blockers: list[str]
     warnings: list[str]
+    plan_signature: str | None = None
+    resolution_state: dict[str, Any] = field(default_factory=dict)
+    resolved_plan_summary: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
@@ -213,3 +241,12 @@ class LayerComposerResult:
     verification_status: str = "VERIFY_FAILED"
     missing_after_commit: list[str] = field(default_factory=list)
     extra_after_commit: list[str] = field(default_factory=list)
+
+
+@dataclass
+class ResolvedLayerComposerPlan:
+    plan: LayerComposerPlan
+    summary: dict[str, Any]
+    commit_allowed: bool
+    blockers: list[str]
+    warnings: list[str]

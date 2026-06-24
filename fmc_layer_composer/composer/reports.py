@@ -27,14 +27,16 @@ def write_dry_run_report(plan: LayerComposerPlan) -> dict[str, str]:
     fuzzy_candidates_path = directory / f"layer_composer_fuzzy_candidates_{_safe_file_part(plan.target_acp_name)}_{timestamp_for_filename(plan.timestamp)}.csv"
     fuzzy_selected_path = directory / f"layer_composer_fuzzy_selected_{_safe_file_part(plan.target_acp_name)}_{timestamp_for_filename(plan.timestamp)}.csv"
     skipped_path = directory / f"layer_composer_skipped_{_safe_file_part(plan.target_acp_name)}_{timestamp_for_filename(plan.timestamp)}.csv"
+    conflict_resolutions_path = directory / f"layer_composer_conflict_resolutions_{_safe_file_part(plan.target_acp_name)}_{timestamp_for_filename(plan.timestamp)}.csv"
     html_path.write_text(render_dry_run_html(plan), encoding="utf-8")
-    json_path.write_text(json.dumps(plan_to_dict(plan), indent=2, default=str), encoding="utf-8")
+    json_path.write_text(json.dumps(_dry_run_json_payload(plan), indent=2, default=str), encoding="utf-8")
     _write_summary_csv(summary_path, plan)
     _write_missing_csv(missing_path, plan)
     _write_conflicts_csv(conflicts_path, plan)
     _write_fuzzy_candidates_csv(fuzzy_candidates_path, plan)
     _write_fuzzy_selected_csv(fuzzy_selected_path, plan)
     _write_skipped_csv(skipped_path, plan)
+    _write_conflict_resolutions_csv(conflict_resolutions_path, plan)
     return {
         "html": str(html_path),
         "json": str(json_path),
@@ -44,6 +46,7 @@ def write_dry_run_report(plan: LayerComposerPlan) -> dict[str, str]:
         "fuzzy_candidates_csv": str(fuzzy_candidates_path),
         "fuzzy_selected_csv": str(fuzzy_selected_path),
         "skipped_csv": str(skipped_path),
+        "conflict_resolutions_csv": str(conflict_resolutions_path),
     }
 
 
@@ -54,7 +57,7 @@ def write_commit_report(result: LayerComposerResult) -> dict[str, str]:
     json_path = directory / f"{stem}.json"
     created_path = directory / f"layer_composer_created_{_safe_file_part(result.target_acp_name)}_{timestamp_for_filename(result.plan.timestamp)}.csv"
     html_path.write_text(render_commit_html(result), encoding="utf-8")
-    json_path.write_text(json.dumps(result_to_dict(result), indent=2, default=str), encoding="utf-8")
+    json_path.write_text(json.dumps(_commit_json_payload(result), indent=2, default=str), encoding="utf-8")
     _write_created_csv(created_path, result)
     return {"html": str(html_path), "json": str(json_path), "created_csv": str(created_path)}
 
@@ -86,6 +89,7 @@ def render_dry_run_html(plan: LayerComposerPlan) -> str:
             _section("Exact Match Summary", _exact_match_summary(plan)),
             _section("Missing/Fuzzy Candidate Details", _fuzzy_candidate_details(plan)),
             _section("Fuzzy Selected Rules", _fuzzy_selected_details(plan)),
+            _section("Conflict Resolution Summary", _conflict_resolution_summary(plan)),
             _section("Skipped Rules", _skipped_details(plan)),
             _section("Candidate Delta Summary", _candidate_delta_summary(plan)),
             _section("Commit Readiness", _list("Blockers", plan.blockers) + _list("Warnings", plan.warnings)),
@@ -191,6 +195,18 @@ def _candidate_delta_summary(plan: LayerComposerPlan) -> str:
             "ID-only candidate deltas": plan.summary.get("id_only_candidate_deltas", 0),
             "ordering-only deltas": plan.summary.get("ordering_only_deltas", 0),
             "empty/missing normalization deltas": plan.summary.get("empty_missing_normalization_deltas", 0),
+        }
+    )
+
+
+def _conflict_resolution_summary(plan: LayerComposerPlan) -> str:
+    return _summary_table(
+        {
+            "rules with candidate conflicts": sum(1 for match in plan.matches if match.candidate_field_deltas),
+            "context-only conflicts": plan.summary.get("context_only_candidate_deltas", 0),
+            "semantic conflicts": plan.summary.get("semantic_candidate_deltas", 0),
+            "priority overrides selected": plan.resolved_plan_summary.get("priority_overrides_selected", 0),
+            "manually selected candidates": sum(1 for value in plan.resolution_state.values() if value.get("selection_method") == "USER_SELECTED"),
         }
     )
 
@@ -389,9 +405,28 @@ def _write_conflicts_csv(path: Path, plan: LayerComposerPlan) -> None:
                 writer.writerow({"csv_order": match.csv_entry.order, "rule_name": match.csv_entry.rule_name, "candidate_deltas": json.dumps([asdict(delta) for delta in match.candidate_field_deltas], default=str)})
 
 
+def _write_conflict_resolutions_csv(path: Path, plan: LayerComposerPlan) -> None:
+    with path.open("w", newline="", encoding="utf-8") as handle:
+        writer = csv.DictWriter(handle, fieldnames=["csv_order", "csv_rule_name", "status", "user_decision", "selected_candidate", "blocking_delta_count", "informational_delta_count"])
+        writer.writeheader()
+        for match in plan.matches:
+            if match.candidate_field_deltas or match.selected_fuzzy_candidate:
+                writer.writerow(
+                    {
+                        "csv_order": match.csv_entry.order,
+                        "csv_rule_name": match.csv_entry.rule_name,
+                        "status": match.status,
+                        "user_decision": match.user_decision or "",
+                        "selected_candidate": match.selected_candidate.rule_name if match.selected_candidate else "",
+                        "blocking_delta_count": match.blocking_candidate_delta_count,
+                        "informational_delta_count": len(match.candidate_field_deltas) - match.blocking_candidate_delta_count,
+                    }
+                )
+
+
 def _write_fuzzy_candidates_csv(path: Path, plan: LayerComposerPlan) -> None:
     with path.open("w", newline="", encoding="utf-8") as handle:
-        writer = csv.DictWriter(handle, fieldnames=["csv_order", "csv_rule_name", "candidate_rule_name", "source_acp_name", "source_rule_id", "score", "match_tier", "match_reasons", "selected", "user_decision"])
+        writer = csv.DictWriter(handle, fieldnames=["csv_order", "csv_rule_name", "candidate_rule_name", "source_acp_name", "source_rule_id", "score", "match_tier", "match_reasons", "selected", "user_decision", "selection_method", "rename_to_csv_rule_name"])
         writer.writeheader()
         for match in plan.matches:
             for candidate in match.fuzzy_candidates:
@@ -408,6 +443,8 @@ def _write_fuzzy_candidates_csv(path: Path, plan: LayerComposerPlan) -> None:
                         "match_reasons": ";".join(candidate.match_reasons),
                         "selected": bool(selected),
                         "user_decision": match.user_decision or "",
+                        "selection_method": (plan.resolution_state.get(f"{match.csv_entry.order}:{match.csv_entry.rule_name}", {}) or {}).get("selection_method", ""),
+                        "rename_to_csv_rule_name": match.rename_to_csv_rule_name,
                     }
                 )
 
@@ -432,21 +469,80 @@ def _write_fuzzy_selected_csv(path: Path, plan: LayerComposerPlan) -> None:
 
 def _write_skipped_csv(path: Path, plan: LayerComposerPlan) -> None:
     with path.open("w", newline="", encoding="utf-8") as handle:
-        writer = csv.DictWriter(handle, fieldnames=["csv_order", "csv_rule_name", "final_status", "primary_reason_code", "human_reason", "user_decision", "commit_impact"])
+        writer = csv.DictWriter(handle, fieldnames=["csv_order", "csv_rule_name", "primary_reason_code", "human_reason", "source_acps_searched", "exact_candidates_found", "fuzzy_candidate_count", "selected_candidate", "user_decision", "commit_impact"])
         writer.writeheader()
         for match in plan.matches:
             if str(match.status).startswith("SKIPPED"):
+                detail = match.skip_reason_detail
                 writer.writerow(
                     {
                         "csv_order": match.csv_entry.order,
                         "csv_rule_name": match.csv_entry.rule_name,
-                        "final_status": "SKIPPED",
-                        "primary_reason_code": match.primary_reason_code or "",
-                        "human_reason": match.human_reason or match.skip_reason or "",
-                        "user_decision": match.user_decision or "",
-                        "commit_impact": match.commit_impact or "",
+                        "primary_reason_code": detail.primary_reason_code if detail else match.primary_reason_code or "",
+                        "human_reason": detail.human_reason if detail else match.human_reason or match.skip_reason or "",
+                        "source_acps_searched": json.dumps(detail.source_acps_searched if detail else []),
+                        "exact_candidates_found": json.dumps(detail.exact_candidates_found if detail else []),
+                        "fuzzy_candidate_count": len(detail.fuzzy_candidates_found) if detail else len(match.fuzzy_candidates),
+                        "selected_candidate": json.dumps(detail.selected_candidate if detail else None),
+                        "user_decision": detail.user_decision if detail else match.user_decision or "",
+                        "commit_impact": detail.commit_impact if detail else match.commit_impact or "",
                     }
                 )
+
+
+def _dry_run_json_payload(plan: LayerComposerPlan) -> dict[str, Any]:
+    plan_payload = plan_to_dict(plan)
+    return {
+        "report_type": "dry_run",
+        "generated_at": plan.timestamp,
+        "plan_signature": plan.plan_signature,
+        "resolution_state": plan.resolution_state,
+        "resolved_plan_summary": plan.resolved_plan_summary,
+        "skipped_rules": [asdict(match.skip_reason_detail) for match in plan.matches if match.skip_reason_detail],
+        "fuzzy_candidates": [
+            {"csv_order": match.csv_entry.order, "csv_rule_name": match.csv_entry.rule_name, "candidate": asdict(candidate)}
+            for match in plan.matches
+            for candidate in match.fuzzy_candidates
+        ],
+        "fuzzy_selected": [
+            {"csv_order": match.csv_entry.order, "csv_rule_name": match.csv_entry.rule_name, "candidate": asdict(match.selected_fuzzy_candidate)}
+            for match in plan.matches
+            if match.selected_fuzzy_candidate
+        ],
+        "conflict_resolutions": [
+            {"csv_order": match.csv_entry.order, "csv_rule_name": match.csv_entry.rule_name, "candidate_deltas": [asdict(delta) for delta in match.candidate_field_deltas]}
+            for match in plan.matches
+            if match.candidate_field_deltas
+        ],
+        "plan": plan_payload,
+    }
+
+
+def _commit_json_payload(result: LayerComposerResult) -> dict[str, Any]:
+    return {
+        "report_type": "commit",
+        "generated_at": result.plan.timestamp,
+        "plan_signature": result.plan.plan_signature,
+        "resolution_state": result.plan.resolution_state,
+        "resolved_plan_summary": result.plan.resolved_plan_summary,
+        "skipped_rules": result.skipped_rules,
+        "fuzzy_candidates": [
+            {"csv_order": match.csv_entry.order, "csv_rule_name": match.csv_entry.rule_name, "candidate": asdict(candidate)}
+            for match in result.plan.matches
+            for candidate in match.fuzzy_candidates
+        ],
+        "fuzzy_selected": [
+            {"csv_order": match.csv_entry.order, "csv_rule_name": match.csv_entry.rule_name, "candidate": asdict(match.selected_fuzzy_candidate)}
+            for match in result.plan.matches
+            if match.selected_fuzzy_candidate
+        ],
+        "conflict_resolutions": [
+            {"csv_order": match.csv_entry.order, "csv_rule_name": match.csv_entry.rule_name, "candidate_deltas": [asdict(delta) for delta in match.candidate_field_deltas]}
+            for match in result.plan.matches
+            if match.candidate_field_deltas
+        ],
+        "result": result_to_dict(result),
+    }
 
 
 def _write_created_csv(path: Path, result: LayerComposerResult) -> None:
