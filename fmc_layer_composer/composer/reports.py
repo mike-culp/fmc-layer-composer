@@ -77,7 +77,7 @@ def render_dry_run_html(plan: LayerComposerPlan) -> str:
 
 
 def render_commit_html(result: LayerComposerResult) -> str:
-    status = "Commit failed." if result.failed_rule else "Commit completed."
+    status = _commit_status_sentence(result)
     rows = "".join(
         "<tr>"
         f"<td>{item.csv_order}</td><td>{_e(item.rule_name)}</td><td>{_e(item.status)}</td>"
@@ -88,9 +88,10 @@ def render_commit_html(result: LayerComposerResult) -> str:
     return _page(
         "FMC Layer Composer Commit",
         [
-            _section("Executive Summary", f"<p class='banner'>{_e(status)}</p>"),
+            _section("Executive Summary", f"<p class='banner'>{_e(status)}</p>{_commit_summary_table(result)}"),
             _section("Created Rules", "<table><thead><tr><th>Order</th><th>Rule</th><th>Status</th><th>Source ACP</th><th>Target Rule ID</th><th>Placement Strategy</th><th>Error</th></tr></thead><tbody>" + rows + "</tbody></table>"),
             _section("Skipped Rules", f"<pre>{_e(json.dumps(result.skipped_rules, indent=2, default=str))}</pre>"),
+            _section("Post-Commit Verification", _verification_details(result)),
             _section("API Failures", f"<pre>{_e(json.dumps(result.errors, indent=2, default=str))}</pre>"),
             _section("Raw JSON Summary", f"<pre>{_e(json.dumps(result_to_dict(result), indent=2, default=str)[:50000])}</pre>"),
         ],
@@ -114,6 +115,47 @@ def _section(title: str, body: str) -> str:
 def _summary_table(summary: dict[str, Any]) -> str:
     rows = "".join(f"<tr><th>{_e(key)}</th><td>{_e(value)}</td></tr>" for key, value in summary.items())
     return f"<table>{rows}</table>"
+
+
+def _commit_summary_table(result: LayerComposerResult) -> str:
+    return _summary_table(
+        {
+            "CSV rules": len(result.plan.entries),
+            "ready to copy": result.plan.summary.get("ready_to_copy", 0),
+            "skipped": len(result.skipped_rules),
+            "expected creates": result.expected_create_count,
+            "API-created": result.api_created_count,
+            "verified target ACP count": result.verified_target_rule_count,
+            "verification status": result.verification_status,
+        }
+    )
+
+
+def _commit_status_sentence(result: LayerComposerResult) -> str:
+    if result.failed_rule:
+        return "Commit failed."
+    if result.verification_status == "VERIFIED":
+        return "Commit completed and post-commit verification passed."
+    if result.verification_status == "VERIFY_MISMATCH":
+        return "Commit completed, but post-commit verification found a mismatch."
+    return "Commit completed, but post-commit verification failed."
+
+
+def _verification_details(result: LayerComposerResult) -> str:
+    return (
+        _summary_table(
+            {
+                "verification status": result.verification_status,
+                "expected creates": result.expected_create_count,
+                "API-created": result.api_created_count,
+                "verified target ACP count": result.verified_target_rule_count,
+            }
+        )
+        + "<h3>Missing After Commit</h3>"
+        + f"<pre>{_e(json.dumps(result.missing_after_commit, indent=2, default=str))}</pre>"
+        + "<h3>Extra After Commit</h3>"
+        + f"<pre>{_e(json.dumps(result.extra_after_commit, indent=2, default=str))}</pre>"
+    )
 
 
 def _source_acps_table(plan: LayerComposerPlan) -> str:

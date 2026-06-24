@@ -14,11 +14,13 @@ def list_access_rules(
     domain_uuid: str,
     acp_id: str,
     expanded: bool = True,
+    diagnostics_logger: Any | None = None,
 ) -> list[dict]:
     params = {"expanded": "true"} if expanded else None
     return client.get_paginated(
         f"/api/fmc_config/v1/domain/{domain_uuid}/policy/accesspolicies/{acp_id}/accessrules",
         params=params,
+        diagnostics_logger=diagnostics_logger,
     )
 
 

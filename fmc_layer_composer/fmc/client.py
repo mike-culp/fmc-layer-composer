@@ -67,17 +67,34 @@ class FmcClient:
     def delete(self, path: str, params: dict | None = None) -> dict[str, Any]:
         return self._request("DELETE", path, params=params)
 
-    def get_paginated(self, path: str, params: dict | None = None, limit: int = 1000) -> list[dict[str, Any]]:
+    def get_paginated(
+        self,
+        path: str,
+        params: dict | None = None,
+        limit: int = 1000,
+        diagnostics_logger: Any | None = None,
+    ) -> list[dict[str, Any]]:
         merged = dict(params or {})
         merged.setdefault("limit", limit)
         offset = int(merged.get("offset", 0))
         items: list[dict[str, Any]] = []
+        page_number = 0
+        next_path: str | None = None
         while True:
-            merged["offset"] = offset
-            data = self.get(path, params=merged)
+            page_number += 1
+            if next_path:
+                data = self.get(next_path)
+            else:
+                merged["offset"] = offset
+                data = self.get(path, params=merged)
             page_items = data.get("items", [])
             items.extend(page_items)
             paging = data.get("paging", {})
+            _record_page_diagnostic(diagnostics_logger, path, page_number, len(page_items), len(items), paging)
+            next_value = paging.get("next")
+            if next_value:
+                next_path = _next_path(next_value)
+                continue
             count = int(paging.get("count", len(page_items)) or 0)
             total = int(paging.get("total", len(items)) or len(items))
             if not page_items or len(items) >= total or count == 0:
@@ -144,3 +161,37 @@ def _normalize_base_url(base_url: str) -> str:
     if not value.startswith(("http://", "https://")):
         value = "https://" + value
     return value
+
+
+def _next_path(next_value: str) -> str:
+    marker = "/api/"
+    index = next_value.find(marker)
+    if index >= 0:
+        return next_value[index:]
+    return next_value
+
+
+def _record_page_diagnostic(
+    diagnostics_logger: Any | None,
+    path: str,
+    page_number: int,
+    page_count: int,
+    total_returned: int,
+    paging: dict[str, Any],
+) -> None:
+    if not diagnostics_logger:
+        return
+    diagnostics_logger.event(
+        stage="paginated_get",
+        severity="info",
+        decision="fetch_page",
+        details={
+            "path": path,
+            "page_number": page_number,
+            "page_item_count": page_count,
+            "total_items_returned": total_returned,
+            "paging": paging,
+        },
+        api_method="GET",
+        api_path=path,
+    )

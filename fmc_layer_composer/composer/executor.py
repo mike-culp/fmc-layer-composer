@@ -15,6 +15,10 @@ SERVER_MANAGED_RULE_FIELDS = {
     "commentHistoryList",
 }
 
+VERIFIED = "VERIFIED"
+VERIFY_MISMATCH = "VERIFY_MISMATCH"
+VERIFY_FAILED = "VERIFY_FAILED"
+
 
 def sanitize_access_rule_for_create(
     source_rule: dict[str, Any],
@@ -71,7 +75,7 @@ def execute_plan(
 
     for match in plan.matches:
         if not match.selected_candidate:
-            skipped.append({"csv_order": match.csv_entry.order, "rule_name": match.csv_entry.rule_name, "reason": match.skip_reason})
+            skipped.append(_skipped_rule_record(match))
             continue
         candidate = match.selected_candidate
         try:
@@ -135,6 +139,13 @@ def execute_plan(
         errors=errors,
         report_paths={},
     )
+    _verify_commit_result(
+        result=result,
+        client=client,
+        domain_uuid=domain_uuid,
+        rules_module=rules_module,
+        diagnostics_logger=diagnostics_logger,
+    )
     if reports_module:
         result.report_paths = reports_module.write_commit_report(result)
     return result
@@ -142,3 +153,101 @@ def execute_plan(
 
 def result_to_dict(result: LayerComposerResult) -> dict[str, Any]:
     return asdict(result)
+
+
+def _verify_commit_result(
+    *,
+    result: LayerComposerResult,
+    client: Any,
+    domain_uuid: str,
+    rules_module: Any,
+    diagnostics_logger: Any | None = None,
+) -> None:
+    expected_names = [
+        item.rule_name
+        for item in result.created_rules
+        if item.status == RuleMatchStatus.CREATED.value and item.target_rule_id
+    ]
+    result.expected_create_count = sum(1 for match in result.plan.matches if match.selected_candidate)
+    result.api_created_count = len(expected_names)
+    if not result.target_acp_id:
+        result.verification_status = VERIFY_FAILED
+        return
+    try:
+        target_rules = rules_module.list_access_rules(
+            client,
+            domain_uuid,
+            result.target_acp_id,
+            expanded=True,
+            diagnostics_logger=diagnostics_logger,
+        )
+        actual_names = [str(rule.get("name", "")).strip() for rule in target_rules if str(rule.get("name", "")).strip()]
+        result.verified_target_rule_count = len(actual_names)
+        result.missing_after_commit = _missing_names(expected_names, actual_names)
+        result.extra_after_commit = _extra_names(expected_names, actual_names)
+        if result.api_created_count == result.expected_create_count and not result.missing_after_commit:
+            result.verification_status = VERIFIED
+        else:
+            result.verification_status = VERIFY_MISMATCH
+            matching_expected_count = max(result.api_created_count - len(result.missing_after_commit), 0)
+            result.errors.append(
+                {
+                    "type": VERIFY_MISMATCH,
+                    "message": (
+                        f"FMC API returned created IDs for {result.api_created_count} rules, but post-commit "
+                        f"verification found only {matching_expected_count} matching rules in the target ACP."
+                    ),
+                    "missing_after_commit": result.missing_after_commit,
+                    "extra_after_commit": result.extra_after_commit,
+                }
+            )
+    except Exception as exc:  # noqa: BLE001 - verification failure must not hide commit results.
+        result.verification_status = VERIFY_FAILED
+        result.errors.append({"type": VERIFY_FAILED, "message": str(exc)})
+
+
+def _missing_names(expected_names: list[str], actual_names: list[str]) -> list[str]:
+    actual_counts = _counts(actual_names)
+    missing: list[str] = []
+    for name in expected_names:
+        if actual_counts.get(name, 0):
+            actual_counts[name] -= 1
+        else:
+            missing.append(name)
+    return missing
+
+
+def _extra_names(expected_names: list[str], actual_names: list[str]) -> list[str]:
+    expected_counts = _counts(expected_names)
+    extra: list[str] = []
+    for name in actual_names:
+        if expected_counts.get(name, 0):
+            expected_counts[name] -= 1
+        else:
+            extra.append(name)
+    return extra
+
+
+def _counts(names: list[str]) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for name in names:
+        counts[name] = counts.get(name, 0) + 1
+    return counts
+
+
+def _skipped_rule_record(match: Any) -> dict[str, Any]:
+    return {
+        "csv_order": match.csv_entry.order,
+        "rule_name": match.csv_entry.rule_name,
+        "status": match.status,
+        "skip_reason": match.skip_reason or "No selected source candidate.",
+        "source_candidate_summary": [
+            {
+                "source_acp_name": candidate.source_acp_name,
+                "rule_id": candidate.rule_id,
+                "rule_name": candidate.rule_name,
+            }
+            for candidate in match.candidates
+        ],
+        "blockers_or_warnings": list(match.warnings) + ([match.skip_reason] if match.skip_reason else []),
+    }

@@ -31,8 +31,16 @@ def render_commit(client: object | None, domain_uuid: str | None, plan: object |
     if result:
         if result.failed_rule:
             st.error(f"Commit failed at rule {result.failed_rule.csv_order}: {result.failed_rule.error}")
+        elif result.verification_status == "VERIFIED":
+            st.success(f"Commit completed and verified. Target ACP ID: {result.target_acp_id}")
+        elif result.verification_status == "VERIFY_MISMATCH":
+            st.warning(
+                "Commit completed, but post-commit verification found a mismatch. "
+                f"Expected {result.expected_create_count}, API-created {result.api_created_count}, "
+                f"target ACP currently has {result.verified_target_rule_count} rule(s)."
+            )
         else:
-            st.success(f"Commit completed. Target ACP ID: {result.target_acp_id}")
+            st.error(f"Commit completed, but post-commit verification failed. Target ACP ID: {result.target_acp_id}")
         for label, path in result.report_paths.items():
             with open(path, "rb") as handle:
                 st.download_button(f"Download commit {label}", handle, file_name=path.split("/")[-1])

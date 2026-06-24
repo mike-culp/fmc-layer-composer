@@ -160,3 +160,9 @@ class LayerComposerResult:
     failed_rule: CreatedRuleResult | None
     errors: list[dict[str, Any]]
     report_paths: dict[str, str]
+    expected_create_count: int = 0
+    api_created_count: int = 0
+    verified_target_rule_count: int = 0
+    verification_status: str = "VERIFY_FAILED"
+    missing_after_commit: list[str] = field(default_factory=list)
+    extra_after_commit: list[str] = field(default_factory=list)
