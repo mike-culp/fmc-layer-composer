@@ -24,3 +24,22 @@ def test_sanitizer_removes_managed_fields_preserves_conditions_and_description_h
     assert payload["description"] == "keep"
     assert payload["sourceZones"] == {"objects": [{"name": "inside"}]}
     assert "newComments" in payload
+
+
+def test_sanitizer_sets_multi_rule_target_name_and_provenance_part():
+    entry = LayerCsvEntry(107, "Clients-to-PDQ", "Clients-to-PDQ", None, None, [], [], [], [], [], [], [], None, {})
+    payload = sanitize_access_rule_for_create(
+        {"name": "Clients-to-PDQ-app", "action": "ALLOW"},
+        {"source_acp_name": "MGM Grand", "rule_name": "Clients-to-PDQ-app", "source_rule_id": "1", "csv_filename": "x.csv"},
+        entry,
+        target_rule_name="Clients-to-PDQ - part 1",
+        multi_rule_part_number=1,
+        multi_rule_part_total=2,
+        target_naming_mode="CSV_NAME_WITH_PART_SUFFIX",
+    )
+    assert payload["name"] == "Clients-to-PDQ - part 1"
+    comment = payload["newComments"][0]
+    assert "source rule 'Clients-to-PDQ-app'" in comment
+    assert "CSV rule 'Clients-to-PDQ'" in comment
+    assert "Multi-rule override part 1 of 2" in comment
+    assert "target naming mode 'CSV_NAME_WITH_PART_SUFFIX'" in comment

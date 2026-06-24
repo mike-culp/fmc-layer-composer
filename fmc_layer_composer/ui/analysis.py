@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import asdict
+import json
 
 import pandas as pd
 import streamlit as st
@@ -259,9 +260,66 @@ def _render_fuzzy_resolution(plan: object) -> None:
                     }
                 )
             st.dataframe(pd.DataFrame(rows), use_container_width=True)
+            st.caption("Candidate JSON")
+            for candidate in match.fuzzy_candidates:
+                with st.expander(f"View JSON: {candidate.candidate_rule_name}"):
+                    st.json(
+                        {
+                            "candidate": asdict(candidate),
+                            "raw_rule": next((source.rule for source in match.candidates if source.rule_id == candidate.source_rule_id), {}),
+                        }
+                    )
+                    text = json.dumps(asdict(candidate), indent=2, default=str)
+                    st.download_button(
+                        "Download candidate JSON",
+                        text,
+                        file_name=f"candidate_{match.csv_entry.order}_{candidate.source_rule_id}.json",
+                        key=f"download_candidate_json_{st.session_state.get('analysis_plan_id')}_{match.csv_entry.order}_{candidate.source_rule_id}",
+                    )
+                    st.code(text, language="json")
             rule_key = make_rule_key(match.csv_entry.order, match.csv_entry.rule_name)
             state.setdefault(rule_key, initialize_resolution_state(plan, {}).get(rule_key, {}))
             current_state = state[rule_key]
+            st.caption("Multi-rule override")
+            candidate_options = {
+                f"{candidate.candidate_rule_name} | {candidate.source_acp_name} | {candidate.score}": f"{candidate.source_acp_id}:{candidate.source_rule_id}"
+                for candidate in match.fuzzy_candidates
+            }
+            reverse_options = {value: label for label, value in candidate_options.items()}
+            current_multi = [reverse_options[key] for key in current_state.get("selected_candidate_keys", []) if key in reverse_options]
+            selected_multi_labels = st.multiselect(
+                "Selected source rules for override",
+                list(candidate_options.keys()),
+                default=current_multi,
+                key=f"multi_candidate_select_{st.session_state.get('analysis_plan_id')}_{match.csv_entry.order}_{match.csv_entry.rule_name}",
+            )
+            selected_multi_keys = [candidate_options[label] for label in selected_multi_labels]
+            if selected_multi_keys:
+                current_state["selected_candidate_keys"] = selected_multi_keys
+                current_state["selected_source_rules"] = [
+                    {
+                        "candidate_key": key,
+                        "source_acp_id": candidate.source_acp_id,
+                        "source_acp_name": candidate.source_acp_name,
+                        "source_rule_id": candidate.source_rule_id,
+                        "source_rule_name": candidate.candidate_rule_name,
+                        "source_rule_index": 999999,
+                        "selection_order": index,
+                        "selection_method": "USER_SELECTED_MULTI_RULE_OVERRIDE" if len(selected_multi_keys) > 1 else "USER_SELECTED",
+                    }
+                    for index, key in enumerate(selected_multi_keys, start=1)
+                    for candidate in match.fuzzy_candidates
+                    if f"{candidate.source_acp_id}:{candidate.source_rule_id}" == key
+                ]
+                current_state["decision"] = "USE_MULTI_RULE_OVERRIDE" if len(selected_multi_keys) > 1 else "USE_SELECTED_FUZZY_CANDIDATE"
+                current_state["multi_rule_override"] = len(selected_multi_keys) > 1
+                current_state["skip"] = False
+            current_state["target_naming_mode"] = st.selectbox(
+                "Target naming mode",
+                ["AUTO", "CSV_NAME", "PRESERVE_SOURCE_NAMES", "CSV_NAME_WITH_PART_SUFFIX"],
+                index=["AUTO", "CSV_NAME", "PRESERVE_SOURCE_NAMES", "CSV_NAME_WITH_PART_SUFFIX"].index(current_state.get("target_naming_mode", "AUTO")),
+                key=f"target_naming_mode_{st.session_state.get('analysis_plan_id')}_{match.csv_entry.order}_{match.csv_entry.rule_name}",
+            )
             current = current_state.get("selected_candidate_key")
             if current_state.get("skip"):
                 current = "__skip__"
@@ -273,13 +331,14 @@ def _render_fuzzy_resolution(plan: object) -> None:
             elif selected_key == "__not_found__":
                 current_state.update({"decision": "MARK_NOT_FOUND", "skip": True, "selected_candidate_key": None, "selection_method": "USER_SKIPPED"})
             elif selected_key == "__clear__":
-                current_state.update({"decision": "UNRESOLVED", "skip": False, "selected_candidate_key": None, "selection_method": None})
-            else:
+                current_state.update({"decision": "UNRESOLVED", "skip": False, "selected_candidate_key": None, "selected_candidate_keys": [], "selected_source_rules": [], "multi_rule_override": False, "selection_method": None})
+            elif not current_state.get("multi_rule_override"):
                 selected = next(candidate for candidate in match.fuzzy_candidates if f"{candidate.source_acp_id}:{candidate.source_rule_id}" == selected_key)
                 current_state.update(
                     {
                         "decision": "USE_SELECTED_FUZZY_CANDIDATE",
                         "selected_candidate_key": selected_key,
+                        "selected_candidate_keys": [selected_key],
                         "selected_source_acp_id": selected.source_acp_id,
                         "selected_source_acp_name": selected.source_acp_name,
                         "selected_source_rule_id": selected.source_rule_id,

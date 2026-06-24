@@ -5,7 +5,7 @@ from dataclasses import asdict
 from datetime import datetime, timezone
 from typing import Any
 
-from .fuzzy import find_fuzzy_rule_candidates
+from .fuzzy import find_fuzzy_rule_candidates, find_split_rule_candidates, group_split_rule_candidates
 from .matcher import build_source_rule_index, normalize_rule_name
 from .models import (
     LayerComposerOptions,
@@ -88,6 +88,7 @@ def _duplicate_match(entry: LayerCsvEntry, candidates: list[SourceRuleCandidate]
         status=RuleMatchStatus.CSV_DUPLICATE_RULE_NAME.value,
         candidates=candidates,
         fuzzy_candidates=[],
+        split_candidate_groups=[],
         selected_candidate=None,
         selected_fuzzy_candidate=None,
         candidate_deltas=[],
@@ -125,6 +126,8 @@ def _missing_match(
     source_acps: list[SourceAcpRef],
 ) -> LayerRuleMatch:
     fuzzy_candidates = find_fuzzy_rule_candidates(entry.rule_name, source_rules, options.fuzzy)
+    split_candidates = find_split_rule_candidates(entry.rule_name, source_rules, options.fuzzy)
+    split_groups = group_split_rule_candidates(entry.order, entry.rule_name, split_candidates)
     selected_fuzzy = _selected_fuzzy(entry, fuzzy_candidates, options)
     selected_source = _source_candidate_for_fuzzy(selected_fuzzy, source_rules) if selected_fuzzy else None
     if selected_fuzzy and selected_source:
@@ -134,6 +137,7 @@ def _missing_match(
             status=status.value,
             candidates=[],
             fuzzy_candidates=fuzzy_candidates,
+            split_candidate_groups=split_groups,
             selected_candidate=selected_source,
             selected_fuzzy_candidate=selected_fuzzy,
             candidate_deltas=[],
@@ -173,6 +177,7 @@ def _missing_match(
         status=status.value,
         candidates=[],
         fuzzy_candidates=fuzzy_candidates,
+        split_candidate_groups=split_groups,
         selected_candidate=None,
         selected_fuzzy_candidate=None,
         candidate_deltas=[],
@@ -239,6 +244,7 @@ def _candidate_match(
         status=status.value,
         candidates=candidates,
         fuzzy_candidates=[],
+        split_candidate_groups=[],
         selected_candidate=selected,
         selected_fuzzy_candidate=None,
         candidate_deltas=candidate_deltas,

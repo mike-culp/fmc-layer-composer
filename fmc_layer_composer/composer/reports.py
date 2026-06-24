@@ -28,6 +28,8 @@ def write_dry_run_report(plan: LayerComposerPlan) -> dict[str, str]:
     fuzzy_selected_path = directory / f"layer_composer_fuzzy_selected_{_safe_file_part(plan.target_acp_name)}_{timestamp_for_filename(plan.timestamp)}.csv"
     skipped_path = directory / f"layer_composer_skipped_{_safe_file_part(plan.target_acp_name)}_{timestamp_for_filename(plan.timestamp)}.csv"
     conflict_resolutions_path = directory / f"layer_composer_conflict_resolutions_{_safe_file_part(plan.target_acp_name)}_{timestamp_for_filename(plan.timestamp)}.csv"
+    multi_rule_path = directory / f"layer_composer_multi_rule_overrides_{_safe_file_part(plan.target_acp_name)}_{timestamp_for_filename(plan.timestamp)}.csv"
+    create_tasks_path = directory / f"layer_composer_create_tasks_{_safe_file_part(plan.target_acp_name)}_{timestamp_for_filename(plan.timestamp)}.csv"
     html_path.write_text(render_dry_run_html(plan), encoding="utf-8")
     json_path.write_text(json.dumps(_dry_run_json_payload(plan), indent=2, default=str), encoding="utf-8")
     _write_summary_csv(summary_path, plan)
@@ -37,6 +39,8 @@ def write_dry_run_report(plan: LayerComposerPlan) -> dict[str, str]:
     _write_fuzzy_selected_csv(fuzzy_selected_path, plan)
     _write_skipped_csv(skipped_path, plan)
     _write_conflict_resolutions_csv(conflict_resolutions_path, plan)
+    _write_multi_rule_overrides_csv(multi_rule_path, plan)
+    _write_create_tasks_csv(create_tasks_path, plan)
     return {
         "html": str(html_path),
         "json": str(json_path),
@@ -47,6 +51,8 @@ def write_dry_run_report(plan: LayerComposerPlan) -> dict[str, str]:
         "fuzzy_selected_csv": str(fuzzy_selected_path),
         "skipped_csv": str(skipped_path),
         "conflict_resolutions_csv": str(conflict_resolutions_path),
+        "multi_rule_overrides_csv": str(multi_rule_path),
+        "create_tasks_csv": str(create_tasks_path),
     }
 
 
@@ -89,6 +95,7 @@ def render_dry_run_html(plan: LayerComposerPlan) -> str:
             _section("Exact Match Summary", _exact_match_summary(plan)),
             _section("Missing/Fuzzy Candidate Details", _fuzzy_candidate_details(plan)),
             _section("Fuzzy Selected Rules", _fuzzy_selected_details(plan)),
+            _section("Multi-Rule Overrides / FMT Split Rules", _multi_rule_override_details(plan)),
             _section("Conflict Resolution Summary", _conflict_resolution_summary(plan)),
             _section("Skipped Rules", _skipped_details(plan)),
             _section("Candidate Delta Summary", _candidate_delta_summary(plan)),
@@ -113,6 +120,8 @@ def render_commit_html(result: LayerComposerResult) -> str:
         [
             _section("Executive Summary", f"<p class='banner'>{_e(status)}</p>{_commit_summary_table(result)}"),
             _section("Created Rules", "<table><thead><tr><th>Order</th><th>Rule</th><th>Status</th><th>Source ACP</th><th>Target Rule ID</th><th>Placement Strategy</th><th>Error</th></tr></thead><tbody>" + rows + "</tbody></table>"),
+            _section("Multi-Rule Overrides / FMT Split Rules", _multi_rule_override_details(result.plan)),
+            _section("Create Tasks", _create_tasks_table(result.create_tasks)),
             _section("Skipped Rules", f"<pre>{_e(json.dumps(result.skipped_rules, indent=2, default=str))}</pre>"),
             _section("Post-Commit Verification", _verification_details(result)),
             _section("API Failures", f"<pre>{_e(json.dumps(result.errors, indent=2, default=str))}</pre>"),
@@ -147,6 +156,7 @@ def _commit_summary_table(result: LayerComposerResult) -> str:
             "ready to copy": result.plan.summary.get("ready_to_copy", 0),
             "skipped": len(result.skipped_rules),
             "expected creates": result.expected_create_count,
+            "expected create operations": result.expected_create_operations,
             "API-created": result.api_created_count,
             "verified target ACP count": result.verified_target_rule_count,
             "verification status": result.verification_status,
@@ -260,6 +270,38 @@ def _fuzzy_selected_details(plan: LayerComposerPlan) -> str:
     if not rows:
         return "<p>None.</p>"
     return "<table><thead><tr><th>CSV order</th><th>CSV rule</th><th>source rule</th><th>source ACP</th><th>renamed to CSV</th><th>warnings</th></tr></thead><tbody>" + "".join(rows) + "</tbody></table>"
+
+
+def _multi_rule_override_details(plan: LayerComposerPlan) -> str:
+    rows = []
+    for task in plan.resolved_plan_summary.get("create_tasks", []):
+        if not task.get("is_multi_rule_override"):
+            continue
+        rows.append(
+            "<tr>"
+            f"<td>{task.get('csv_order')}</td><td>{_e(task.get('csv_rule_name'))}</td>"
+            f"<td>{_e(task.get('source_acp_name'))}</td><td>{_e(task.get('source_rule_name'))}</td>"
+            f"<td>{_e(task.get('source_rule_id'))}</td><td>{_e(task.get('multi_rule_part_number'))}/{_e(task.get('multi_rule_part_total'))}</td>"
+            f"<td>{_e(task.get('target_rule_name'))}</td><td>{_e(task.get('selection_method'))}</td>"
+            "</tr>"
+        )
+    if not rows:
+        return "<p>None.</p>"
+    return "<table><thead><tr><th>CSV order</th><th>CSV rule</th><th>source ACP</th><th>source rule</th><th>source rule ID</th><th>part</th><th>target rule</th><th>selection method</th></tr></thead><tbody>" + "".join(rows) + "</tbody></table>"
+
+
+def _create_tasks_table(tasks: list[Any]) -> str:
+    if not tasks:
+        return "<p>None.</p>"
+    rows = "".join(
+        "<tr>"
+        f"<td>{task.task_order}</td><td>{task.csv_order}</td><td>{_e(task.csv_rule_name)}</td>"
+        f"<td>{_e(task.source_acp_name)}</td><td>{_e(task.source_rule_name)}</td><td>{_e(task.target_rule_name)}</td>"
+        f"<td>{_e(task.is_multi_rule_override)}</td><td>{_e(task.multi_rule_part_number or '')}</td><td>{_e(task.multi_rule_part_total or '')}</td>"
+        "</tr>"
+        for task in tasks
+    )
+    return "<table><thead><tr><th>task</th><th>CSV order</th><th>CSV rule</th><th>source ACP</th><th>source rule</th><th>target rule</th><th>multi</th><th>part</th><th>total</th></tr></thead><tbody>" + rows + "</tbody></table>"
 
 
 def _skipped_details(plan: LayerComposerPlan) -> str:
@@ -490,6 +532,39 @@ def _write_skipped_csv(path: Path, plan: LayerComposerPlan) -> None:
                 )
 
 
+def _write_multi_rule_overrides_csv(path: Path, plan: LayerComposerPlan) -> None:
+    with path.open("w", newline="", encoding="utf-8") as handle:
+        writer = csv.DictWriter(handle, fieldnames=["csv_order", "csv_rule_name", "selected_count", "target_naming_mode", "selection_method", "selected_source_acp_names", "selected_source_rule_names", "target_rule_names", "match_reasons", "warnings"])
+        writer.writeheader()
+        tasks = [task for task in plan.resolved_plan_summary.get("create_tasks", []) if task.get("is_multi_rule_override")]
+        by_order: dict[int, list[dict[str, Any]]] = {}
+        for task in tasks:
+            by_order.setdefault(int(task["csv_order"]), []).append(task)
+        for csv_order, items in sorted(by_order.items()):
+            writer.writerow(
+                {
+                    "csv_order": csv_order,
+                    "csv_rule_name": items[0]["csv_rule_name"],
+                    "selected_count": len(items),
+                    "target_naming_mode": plan.resolution_state.get(f"{csv_order}:{items[0]['csv_rule_name']}", {}).get("target_naming_mode", "AUTO"),
+                    "selection_method": ";".join(sorted({item["selection_method"] for item in items})),
+                    "selected_source_acp_names": ";".join(item["source_acp_name"] for item in items),
+                    "selected_source_rule_names": ";".join(item["source_rule_name"] for item in items),
+                    "target_rule_names": ";".join(item["target_rule_name"] for item in items),
+                    "match_reasons": "",
+                    "warnings": "",
+                }
+            )
+
+
+def _write_create_tasks_csv(path: Path, plan: LayerComposerPlan) -> None:
+    with path.open("w", newline="", encoding="utf-8") as handle:
+        writer = csv.DictWriter(handle, fieldnames=["task_order", "csv_order", "csv_rule_name", "source_acp_name", "source_rule_name", "source_rule_id", "target_rule_name", "is_multi_rule_override", "multi_rule_part_number", "multi_rule_part_total", "selection_method"])
+        writer.writeheader()
+        for task in plan.resolved_plan_summary.get("create_tasks", []):
+            writer.writerow({field: task.get(field) for field in writer.fieldnames})
+
+
 def _dry_run_json_payload(plan: LayerComposerPlan) -> dict[str, Any]:
     plan_payload = plan_to_dict(plan)
     return {
@@ -514,6 +589,11 @@ def _dry_run_json_payload(plan: LayerComposerPlan) -> dict[str, Any]:
             for match in plan.matches
             if match.candidate_field_deltas
         ],
+        "multi_rule_overrides": [
+            task for task in plan.resolved_plan_summary.get("create_tasks", []) if task.get("is_multi_rule_override")
+        ],
+        "create_tasks": plan.resolved_plan_summary.get("create_tasks", []),
+        "expected_create_operations": plan.resolved_plan_summary.get("expected_create_operations", plan.summary.get("expected_create_operations", 0)),
         "plan": plan_payload,
     }
 
@@ -541,6 +621,9 @@ def _commit_json_payload(result: LayerComposerResult) -> dict[str, Any]:
             for match in result.plan.matches
             if match.candidate_field_deltas
         ],
+        "multi_rule_overrides": [asdict(task) for task in result.create_tasks if task.is_multi_rule_override],
+        "create_tasks": [asdict(task) for task in result.create_tasks],
+        "expected_create_operations": result.expected_create_operations,
         "result": result_to_dict(result),
     }
 

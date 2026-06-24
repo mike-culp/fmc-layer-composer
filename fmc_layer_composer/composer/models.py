@@ -21,6 +21,14 @@ class RuleMatchStatus(str, Enum):
     FUZZY_CANDIDATES_FOUND = "FUZZY_CANDIDATES_FOUND"
     FUZZY_SELECTED = "FUZZY_SELECTED"
     FUZZY_SELECTED_RENAMED_TO_CSV = "FUZZY_SELECTED_RENAMED_TO_CSV"
+    FMT_SPLIT_CANDIDATES_FOUND = "FMT_SPLIT_CANDIDATES_FOUND"
+    MULTI_RULE_OVERRIDE_SELECTED = "MULTI_RULE_OVERRIDE_SELECTED"
+    MULTI_RULE_OVERRIDE_READY = "MULTI_RULE_OVERRIDE_READY"
+    MULTI_RULE_OVERRIDE_RENAMED = "MULTI_RULE_OVERRIDE_RENAMED"
+    MULTI_RULE_OVERRIDE_PRESERVE_SOURCE_NAMES = "MULTI_RULE_OVERRIDE_PRESERVE_SOURCE_NAMES"
+    MULTI_RULE_OVERRIDE_CREATED = "MULTI_RULE_OVERRIDE_CREATED"
+    MULTI_RULE_OVERRIDE_PART_CREATED = "MULTI_RULE_OVERRIDE_PART_CREATED"
+    MULTI_RULE_OVERRIDE_PART_FAILED = "MULTI_RULE_OVERRIDE_PART_FAILED"
     NO_FUZZY_CANDIDATES = "NO_FUZZY_CANDIDATES"
     SKIPPED_NO_CANDIDATE_SELECTED = "SKIPPED_NO_CANDIDATE_SELECTED"
     SKIPPED_BY_USER = "SKIPPED_BY_USER"
@@ -115,6 +123,19 @@ class FuzzyRuleCandidate:
 
 
 @dataclass
+class SplitRuleCandidateGroup:
+    csv_order: int
+    csv_rule_name: str
+    source_acp_name: str
+    source_acp_id: str
+    candidates: list[FuzzyRuleCandidate]
+    group_score: float
+    group_reasons: list[str]
+    blocking_delta_count: int
+    informational_delta_count: int
+
+
+@dataclass
 class CandidateFieldDelta:
     field_path: str
     severity: str
@@ -158,6 +179,7 @@ class LayerRuleMatch:
     status: str
     candidates: list[SourceRuleCandidate]
     fuzzy_candidates: list[FuzzyRuleCandidate]
+    split_candidate_groups: list[SplitRuleCandidateGroup]
     selected_candidate: SourceRuleCandidate | None
     selected_fuzzy_candidate: FuzzyRuleCandidate | None
     candidate_deltas: list[dict[str, Any]]
@@ -223,6 +245,27 @@ class CreatedRuleResult:
     error: str | None
     response: dict[str, Any] | None
     placement_strategy: str | None = None
+    task_order: int | None = None
+    target_rule_name: str | None = None
+    is_multi_rule_override: bool = False
+    multi_rule_part_number: int | None = None
+    multi_rule_part_total: int | None = None
+
+
+@dataclass
+class RuleCreateTask:
+    csv_order: int
+    csv_rule_name: str
+    task_order: int
+    source_acp_id: str
+    source_acp_name: str
+    source_rule_id: str
+    source_rule_name: str
+    target_rule_name: str
+    selection_method: str
+    is_multi_rule_override: bool
+    multi_rule_part_number: int | None
+    multi_rule_part_total: int | None
 
 
 @dataclass
@@ -241,6 +284,8 @@ class LayerComposerResult:
     verification_status: str = "VERIFY_FAILED"
     missing_after_commit: list[str] = field(default_factory=list)
     extra_after_commit: list[str] = field(default_factory=list)
+    create_tasks: list[RuleCreateTask] = field(default_factory=list)
+    expected_create_operations: int = 0
 
 
 @dataclass

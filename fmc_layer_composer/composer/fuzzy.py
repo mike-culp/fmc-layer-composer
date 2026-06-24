@@ -3,7 +3,7 @@ from __future__ import annotations
 import difflib
 import re
 
-from .models import FuzzyMatchOptions, FuzzyRuleCandidate, SourceRuleCandidate
+from .models import FuzzyMatchOptions, FuzzyRuleCandidate, SourceRuleCandidate, SplitRuleCandidateGroup
 
 
 ARTIFACT_SUFFIX_RE = re.compile(r"(?i)(?:_\d+)+$|-\d+$|\s+\(\d+\)$|\s+copy$")
@@ -34,6 +34,52 @@ def find_fuzzy_rule_candidates(
             item.candidate_rule_name.casefold(),
         ),
     )
+
+
+def find_split_rule_candidates(
+    csv_rule_name: str,
+    source_rules: list[SourceRuleCandidate],
+    options: FuzzyMatchOptions,
+) -> list[FuzzyRuleCandidate]:
+    candidates = find_fuzzy_rule_candidates(csv_rule_name, source_rules, options)
+    split_suffixes = ("-l4", "-app", "-appid", "-url", "-custom", "-ping", "-icmp")
+    base = artifact_base_name(csv_rule_name)
+    selected: list[FuzzyRuleCandidate] = []
+    for candidate in candidates:
+        normalized = candidate.normalized_candidate_name
+        if candidate.match_tier == "ARTIFACT_SUFFIX" or any(normalized == f"{base}{suffix}" for suffix in split_suffixes):
+            selected.append(candidate)
+    return selected
+
+
+def group_split_rule_candidates(
+    csv_order: int,
+    csv_rule_name: str,
+    candidates: list[FuzzyRuleCandidate],
+) -> list[SplitRuleCandidateGroup]:
+    grouped: dict[tuple[str, str], list[FuzzyRuleCandidate]] = {}
+    for candidate in candidates:
+        key = (candidate.source_acp_id, candidate.artifact_base_candidate_name)
+        grouped.setdefault(key, []).append(candidate)
+    groups: list[SplitRuleCandidateGroup] = []
+    for (source_acp_id, _base), items in grouped.items():
+        if len(items) < 2:
+            continue
+        ordered = sorted(items, key=lambda item: (item.source_acp_name, item.candidate_rule_name.casefold()))
+        groups.append(
+            SplitRuleCandidateGroup(
+                csv_order=csv_order,
+                csv_rule_name=csv_rule_name,
+                source_acp_name=ordered[0].source_acp_name,
+                source_acp_id=source_acp_id,
+                candidates=ordered,
+                group_score=round(sum(item.score for item in ordered) / len(ordered), 4),
+                group_reasons=sorted({reason for item in ordered for reason in item.match_reasons} | {"FMT_SPLIT_CANDIDATES_FOUND"}),
+                blocking_delta_count=sum(len(item.blocking_candidate_deltas) for item in ordered),
+                informational_delta_count=sum(len(item.informational_candidate_deltas) for item in ordered),
+            )
+        )
+    return sorted(groups, key=lambda group: (group.source_acp_name.casefold(), -group.group_score))
 
 
 def normalize_fuzzy_name(name: str) -> str:
