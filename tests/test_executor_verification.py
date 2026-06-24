@@ -19,7 +19,8 @@ class RulesModule:
 
     @staticmethod
     def get_access_rule(client, domain_uuid, acp_id, rule_id):
-        return {"id": rule_id, "name": f"Rule {rule_id}", "action": "ALLOW"}
+        names = {"1": "Clients-to-PDQ_1"}
+        return {"id": rule_id, "name": names.get(rule_id, f"Rule {rule_id}"), "action": "ALLOW"}
 
     @staticmethod
     def create_access_rule_from_payload(client, domain_uuid, target_acp_id, payload, section="mandatory", diagnostics_logger=None):
@@ -99,7 +100,69 @@ def test_skipped_rules_include_skip_reason_and_candidate_context():
     skipped = result.skipped_rules[0]
     assert skipped["csv_order"] == 2
     assert skipped["rule_name"] == "Missing"
-    assert skipped["status"] == "SKIPPED"
+    assert skipped["final_status"] == "SKIPPED"
     assert skipped["skip_reason"]
     assert "source_candidate_summary" in skipped
     assert "blockers_or_warnings" in skipped
+
+
+def test_fuzzy_candidate_is_not_copied_unless_selected_when_skip_missing_enabled():
+    plan = build_plan(
+        csv_filename="x.csv",
+        entries=[entry(1, "Clients-to-PDQ")],
+        duplicate_rule_names=[],
+        source_acps=[SourceAcpRef("source", "Source ACP", 1)],
+        source_rules_by_acp={"source": [source_rule("1", "Clients-to-PDQ_1")]},
+        options=LayerComposerOptions(target_acp_name="target", skip_missing=True),
+    )
+    assert plan.matches[0].status == "SKIPPED_NO_CANDIDATE_SELECTED"
+    result = execute_plan(
+        plan=plan,
+        client=object(),
+        domain_uuid="domain",
+        policies_module=PoliciesModule,
+        rules_module=RulesModule([]),
+    )
+    assert result.created_rules == []
+    assert result.skipped_rules[0]["primary_reason_code"] == "NO_EXACT_MATCH"
+    assert result.skipped_rules[0]["fuzzy_candidates_found"][0]["rule_name"] == "Clients-to-PDQ_1"
+
+
+def test_selected_fuzzy_candidate_is_copied_in_csv_order_and_renamed_to_csv_name():
+    options = LayerComposerOptions(target_acp_name="target", skip_missing=True)
+    options.fuzzy_selections = {1: "source:1"}
+    plan = build_plan(
+        csv_filename="x.csv",
+        entries=[entry(1, "Clients-to-PDQ")],
+        duplicate_rule_names=[],
+        source_acps=[SourceAcpRef("source", "Source ACP", 1)],
+        source_rules_by_acp={"source": [source_rule("1", "Clients-to-PDQ_1")]},
+        options=options,
+    )
+    assert plan.matches[0].status == "FUZZY_SELECTED_RENAMED_TO_CSV"
+    result = execute_plan(
+        plan=plan,
+        client=object(),
+        domain_uuid="domain",
+        policies_module=PoliciesModule,
+        rules_module=RulesModule([{"name": "Clients-to-PDQ"}]),
+    )
+    assert result.created_rules[0].csv_order == 1
+    assert result.created_rules[0].rule_name == "Clients-to-PDQ"
+    assert result.verification_status == "VERIFIED"
+
+
+def test_selected_fuzzy_provenance_records_source_and_csv_rule_names():
+    from fmc_layer_composer.composer.executor import sanitize_access_rule_for_create
+
+    payload = sanitize_access_rule_for_create(
+        {"name": "Clients-to-PDQ_1", "action": "ALLOW"},
+        {"source_acp_name": "MGM Grand", "rule_name": "Clients-to-PDQ_1", "source_rule_id": "1", "csv_filename": "x.csv"},
+        entry(107, "Clients-to-PDQ"),
+        target_rule_name="Clients-to-PDQ",
+    )
+    assert payload["name"] == "Clients-to-PDQ"
+    comment = payload["newComments"][0]
+    assert "source rule 'Clients-to-PDQ_1'" in comment
+    assert "CSV rule 'Clients-to-PDQ'" in comment
+    assert "renamed to the CSV rule name" in comment

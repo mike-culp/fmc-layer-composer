@@ -56,6 +56,11 @@ def render_analysis(client: object | None, domain_uuid: str | None, selected_pol
         stop_on_first_failure=st.checkbox("Stop on first create failure", value=True),
         target_acp_name=target_name,
     )
+    options.fuzzy.threshold = st.slider("Fuzzy candidate threshold", min_value=0.5, max_value=1.0, value=0.72, step=0.01)
+    options.fuzzy.auto_accept_single_deterministic_artifact = st.checkbox("Auto-accept single deterministic artifact matches", value=False)
+    options.target_rule_name_mode = st.selectbox("Target rule naming", ["csv", "source"], format_func=lambda value: "Use CSV rule name" if value == "csv" else "Preserve selected source rule name")
+    options.fuzzy_selections = dict(st.session_state.get("fuzzy_selections", {}))
+    options.fuzzy_skips = set(st.session_state.get("fuzzy_skips", set()))
 
     if not st.button("Analyze / Dry Run", type="primary"):
         return st.session_state.get("plan")
@@ -112,6 +117,7 @@ def _render_plan(plan: object) -> None:
             }
         )
     st.dataframe(pd.DataFrame(rows), use_container_width=True)
+    _render_fuzzy_resolution(plan)
     for label, path in getattr(plan, "report_paths", {}).items():
         with open(path, "rb") as handle:
             st.download_button(f"Download {label}", handle, file_name=path.split("/")[-1])
@@ -143,3 +149,71 @@ def _sanity_delta_preview(match: object) -> str:
         else:
             messages.append(delta.code)
     return "; ".join(messages)
+
+
+def _render_fuzzy_resolution(plan: object) -> None:
+    fuzzy_matches = [match for match in plan.matches if getattr(match, "fuzzy_candidates", [])]
+    if not fuzzy_matches:
+        return
+    st.header("Missing / Fuzzy Match Resolution")
+    selections = dict(st.session_state.get("fuzzy_selections", {}))
+    skips = set(st.session_state.get("fuzzy_skips", set()))
+    changed = False
+    for match in fuzzy_matches:
+        with st.expander(f"{match.csv_entry.order}. {match.csv_entry.rule_name} ({match.status})"):
+            st.write(
+                {
+                    "CSV action": match.csv_entry.csv_action,
+                    "CSV source": match.csv_entry.csv_source_objects,
+                    "CSV destination": match.csv_entry.csv_destination_objects,
+                    "CSV apps": match.csv_entry.csv_applications,
+                    "CSV services": match.csv_entry.csv_services,
+                    "exact status": match.status,
+                }
+            )
+            rows = []
+            labels = ["Skip rule", "Mark not found", "Clear selection"]
+            keys = ["__skip__", "__not_found__", "__clear__"]
+            for candidate in match.fuzzy_candidates:
+                key = f"{candidate.source_acp_id}:{candidate.source_rule_id}"
+                labels.append(f"{candidate.candidate_rule_name} | {candidate.source_acp_name} | {candidate.score}")
+                keys.append(key)
+                rows.append(
+                    {
+                        "candidate rule name": candidate.candidate_rule_name,
+                        "source ACP": candidate.source_acp_name,
+                        "source rule ID": candidate.source_rule_id,
+                        "score": candidate.score,
+                        "match tier": candidate.match_tier,
+                        "match reasons": ", ".join(candidate.match_reasons),
+                        "semantic blockers count": len(candidate.blocking_candidate_deltas),
+                        "informational warnings count": len(candidate.informational_candidate_deltas),
+                    }
+                )
+            st.dataframe(pd.DataFrame(rows), use_container_width=True)
+            current = selections.get(match.csv_entry.order)
+            if match.csv_entry.order in skips:
+                current = "__skip__"
+            index = keys.index(current) if current in keys else 2
+            choice = st.radio("Resolution", labels, index=index, key=f"fuzzy_resolution_{match.csv_entry.order}")
+            selected_key = keys[labels.index(choice)]
+            if selected_key == "__skip__":
+                skips.add(match.csv_entry.order)
+                selections.pop(match.csv_entry.order, None)
+                changed = True
+            elif selected_key == "__not_found__":
+                skips.add(match.csv_entry.order)
+                selections.pop(match.csv_entry.order, None)
+                changed = True
+            elif selected_key == "__clear__":
+                skips.discard(match.csv_entry.order)
+                selections.pop(match.csv_entry.order, None)
+                changed = True
+            else:
+                skips.discard(match.csv_entry.order)
+                selections[match.csv_entry.order] = selected_key
+                changed = True
+    if changed:
+        st.session_state["fuzzy_selections"] = selections
+        st.session_state["fuzzy_skips"] = skips
+    st.caption("Re-run Analyze / Dry Run after changing fuzzy selections so the plan and reports include the selected decisions.")

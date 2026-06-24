@@ -21,11 +21,11 @@ def test_missing_rule_detection_and_skip_missing():
     acps = [SourceAcpRef("a", "ACP", 1)]
     options = LayerComposerOptions(target_acp_name="target")
     plan = build_plan(csv_filename="x.csv", entries=[entry()], duplicate_rule_names=[], source_acps=acps, source_rules_by_acp={"a": []}, options=options)
-    assert plan.matches[0].status == "MISSING"
+    assert plan.matches[0].status == "NO_FUZZY_CANDIDATES"
     assert not plan.commit_allowed
     options.skip_missing = True
     plan = build_plan(csv_filename="x.csv", entries=[entry()], duplicate_rule_names=[], source_acps=acps, source_rules_by_acp={"a": []}, options=options)
-    assert plan.matches[0].status == "SKIPPED"
+    assert plan.matches[0].status == "SKIPPED_BY_OPTION"
 
 
 def test_priority_for_identical_candidates():
@@ -147,3 +147,37 @@ def test_variable_set_and_object_ids_only_do_not_block_commit():
     assert plan.matches[0].status == "MATCHED_IDENTICAL_MULTIPLE"
     assert plan.matches[0].blocking_candidate_delta_count == 0
     assert plan.commit_allowed
+
+
+def test_missing_with_fuzzy_candidates_but_no_selection_is_structured_skip():
+    acps = [SourceAcpRef("a", "MGM Grand", 1)]
+    options = LayerComposerOptions(target_acp_name="target", skip_missing=True)
+    plan = build_plan(
+        csv_filename="x.csv",
+        entries=[entry("Clients-to-PDQ")],
+        duplicate_rule_names=[],
+        source_acps=acps,
+        source_rules_by_acp={"a": [rule("1", "Clients-to-PDQ_1")]},
+        options=options,
+    )
+    match = plan.matches[0]
+    assert match.status == "SKIPPED_NO_CANDIDATE_SELECTED"
+    assert match.primary_reason_code == "NO_EXACT_MATCH"
+    assert match.user_decision == "SKIPPED_NO_CANDIDATE_SELECTED"
+    assert match.fuzzy_candidates[0].candidate_rule_name == "Clients-to-PDQ_1"
+
+
+def test_missing_with_no_fuzzy_candidates_is_no_fuzzy_candidates():
+    acps = [SourceAcpRef("a", "MGM Grand", 1)]
+    options = LayerComposerOptions(target_acp_name="target")
+    plan = build_plan(
+        csv_filename="x.csv",
+        entries=[entry("Clients-to-PDQ")],
+        duplicate_rule_names=[],
+        source_acps=acps,
+        source_rules_by_acp={"a": [rule("1", "unrelated-rule")]},
+        options=options,
+    )
+    match = plan.matches[0]
+    assert match.status == "NO_FUZZY_CANDIDATES"
+    assert match.primary_reason_code == "NO_FUZZY_CANDIDATES"

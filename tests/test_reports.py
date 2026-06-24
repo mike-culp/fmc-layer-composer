@@ -1,7 +1,8 @@
 from fmc_layer_composer.composer.models import LayerComposerOptions
 from fmc_layer_composer.composer.planner import build_plan
 from fmc_layer_composer.composer.planner import plan_to_dict
-from fmc_layer_composer.composer.reports import render_dry_run_html
+from fmc_layer_composer.composer import reports
+from fmc_layer_composer.composer.reports import render_dry_run_html, write_dry_run_report
 
 
 def test_report_renders_self_contained_html():
@@ -63,3 +64,24 @@ def test_report_labels_variable_set_delta_as_context_only_info():
     assert "variableSet.name" in html
     assert "CONTEXT_ONLY_DIFFERENCE" in html
     assert "This is treated as informational and does not block rule copy." in html
+
+
+def test_report_includes_fuzzy_candidates_section_and_csv(tmp_path, monkeypatch):
+    from fmc_layer_composer.composer.models import LayerCsvEntry, SourceAcpRef
+
+    monkeypatch.setattr(reports, "REPORT_ROOT", tmp_path)
+    entry = LayerCsvEntry(1, "Clients-to-PDQ", "Clients-to-PDQ", None, None, [], [], [], [], [], [], [], None, {})
+    plan = build_plan(
+        csv_filename="x.csv",
+        entries=[entry],
+        duplicate_rule_names=[],
+        source_acps=[SourceAcpRef("a", "MGM Grand", 1)],
+        source_rules_by_acp={"a": [{"id": "1", "name": "Clients-to-PDQ_1", "action": "ALLOW"}]},
+        options=LayerComposerOptions(target_acp_name="target", skip_missing=True),
+    )
+    html = render_dry_run_html(plan)
+    assert "Missing/Fuzzy Candidate Details" in html
+    assert "Clients-to-PDQ_1" in html
+    paths = write_dry_run_report(plan)
+    assert "fuzzy_candidates_csv" in paths
+    assert "Clients-to-PDQ_1" in open(paths["fuzzy_candidates_csv"], encoding="utf-8").read()

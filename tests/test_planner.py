@@ -56,4 +56,4 @@ def test_allows_missing_with_skip_when_some_match():
         options=options,
     )
     assert plan.commit_allowed
-    assert plan.matches[1].status == "SKIPPED"
+    assert plan.matches[1].status == "SKIPPED_BY_OPTION"

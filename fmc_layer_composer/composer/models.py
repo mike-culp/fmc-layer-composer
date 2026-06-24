@@ -12,10 +12,19 @@ class MatchMode(str, Enum):
 
 
 class RuleMatchStatus(str, Enum):
+    EXACT_MATCH = "EXACT_MATCH"
     READY_TO_COPY = "READY_TO_COPY"
     MATCHED_ONE = "MATCHED_ONE"
     MATCHED_IDENTICAL_MULTIPLE = "MATCHED_IDENTICAL_MULTIPLE"
     MATCHED_MULTIPLE_WITH_DELTA = "MATCHED_MULTIPLE_WITH_DELTA"
+    NO_EXACT_MATCH = "NO_EXACT_MATCH"
+    FUZZY_CANDIDATES_FOUND = "FUZZY_CANDIDATES_FOUND"
+    FUZZY_SELECTED = "FUZZY_SELECTED"
+    FUZZY_SELECTED_RENAMED_TO_CSV = "FUZZY_SELECTED_RENAMED_TO_CSV"
+    NO_FUZZY_CANDIDATES = "NO_FUZZY_CANDIDATES"
+    SKIPPED_NO_CANDIDATE_SELECTED = "SKIPPED_NO_CANDIDATE_SELECTED"
+    SKIPPED_BY_USER = "SKIPPED_BY_USER"
+    SKIPPED_BY_OPTION = "SKIPPED_BY_OPTION"
     MISSING = "MISSING"
     CSV_DUPLICATE_RULE_NAME = "CSV_DUPLICATE_RULE_NAME"
     CSV_TO_FMC_DELTA = "CSV_TO_FMC_DELTA"
@@ -73,6 +82,32 @@ class SourceRuleCandidate:
 
 
 @dataclass
+class FuzzyMatchOptions:
+    enabled: bool = True
+    threshold: float = 0.72
+    auto_accept_single_deterministic_artifact: bool = False
+
+
+@dataclass
+class FuzzyRuleCandidate:
+    csv_rule_name: str
+    candidate_rule_name: str
+    source_acp_id: str
+    source_acp_name: str
+    source_rule_id: str
+    score: float
+    match_tier: str
+    match_reasons: list[str]
+    normalized_csv_name: str
+    normalized_candidate_name: str
+    artifact_base_csv_name: str
+    artifact_base_candidate_name: str
+    semantic_summary: dict[str, Any]
+    blocking_candidate_deltas: list[dict[str, Any]]
+    informational_candidate_deltas: list[dict[str, Any]]
+
+
+@dataclass
 class CandidateFieldDelta:
     field_path: str
     severity: str
@@ -98,7 +133,9 @@ class LayerRuleMatch:
     csv_entry: LayerCsvEntry
     status: str
     candidates: list[SourceRuleCandidate]
+    fuzzy_candidates: list[FuzzyRuleCandidate]
     selected_candidate: SourceRuleCandidate | None
+    selected_fuzzy_candidate: FuzzyRuleCandidate | None
     candidate_deltas: list[dict[str, Any]]
     candidate_field_deltas: list[CandidateFieldDelta]
     semantic_candidate_delta_count: int
@@ -107,6 +144,12 @@ class LayerRuleMatch:
     sanity_deltas: list[SanityDelta]
     warnings: list[str]
     skip_reason: str | None
+    primary_reason_code: str | None = None
+    human_reason: str | None = None
+    user_decision: str | None = None
+    commit_impact: str | None = None
+    target_rule_name: str | None = None
+    rename_to_csv_rule_name: bool = False
 
 
 @dataclass
@@ -120,6 +163,10 @@ class LayerComposerOptions:
     default_action: str = "BLOCK"
     rule_section: str = "mandatory"
     stop_on_first_failure: bool = True
+    fuzzy: FuzzyMatchOptions = field(default_factory=FuzzyMatchOptions)
+    fuzzy_selections: dict[int, str] = field(default_factory=dict)
+    fuzzy_skips: set[int] = field(default_factory=set)
+    target_rule_name_mode: str = "csv"
 
 
 @dataclass

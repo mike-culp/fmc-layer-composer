@@ -25,6 +25,7 @@ def sanitize_access_rule_for_create(
     provenance: dict[str, Any],
     csv_entry: Any,
     honor_csv_disabled: bool = True,
+    target_rule_name: str | None = None,
 ) -> dict[str, Any]:
     payload = copy.deepcopy(source_rule)
     for field in SERVER_MANAGED_RULE_FIELDS:
@@ -32,14 +33,18 @@ def sanitize_access_rule_for_create(
     payload["type"] = "AccessRule"
     if "action" not in payload:
         raise ValueError("Source access rule payload is missing required action.")
+    if target_rule_name:
+        payload["name"] = target_rule_name
     if honor_csv_disabled and csv_entry.csv_enabled is False:
         payload["enabled"] = False
     comment = (
         "Copied by FMC Layer Composer from source ACP "
         f"'{provenance.get('source_acp_name')}', source rule '{provenance.get('rule_name')}', "
-        f"source rule ID '{provenance.get('source_rule_id')}', CSV '{provenance.get('csv_filename')}', "
+        f"source rule ID '{provenance.get('source_rule_id')}', CSV rule '{csv_entry.rule_name}', CSV '{provenance.get('csv_filename')}', "
         f"CSV order '{csv_entry.order}'."
     )
+    if target_rule_name and target_rule_name != provenance.get("rule_name"):
+        comment += " Source rule was renamed to the CSV rule name during copy."
     payload["newComments"] = [comment]
     return payload
 
@@ -90,6 +95,7 @@ def execute_plan(
                 },
                 csv_entry=match.csv_entry,
                 honor_csv_disabled=plan.options.honor_csv_disabled,
+                target_rule_name=match.target_rule_name or match.csv_entry.rule_name,
             )
             response = rules_module.create_access_rule_from_payload(
                 client,
@@ -239,7 +245,31 @@ def _skipped_rule_record(match: Any) -> dict[str, Any]:
     return {
         "csv_order": match.csv_entry.order,
         "rule_name": match.csv_entry.rule_name,
+        "csv_rule_name": match.csv_entry.rule_name,
+        "final_status": "SKIPPED",
         "status": match.status,
+        "primary_reason_code": match.primary_reason_code,
+        "human_reason": match.human_reason or match.skip_reason,
+        "match_mode_used": "exact",
+        "source_acps_searched": sorted({candidate.source_acp_name for candidate in match.candidates} | {candidate.source_acp_name for candidate in match.fuzzy_candidates}),
+        "exact_candidates_found": [
+            {"rule_name": candidate.rule_name, "source_acp_name": candidate.source_acp_name, "source_rule_id": candidate.rule_id}
+            for candidate in match.candidates
+        ],
+        "fuzzy_candidates_found": [
+            {
+                "rule_name": candidate.candidate_rule_name,
+                "source_acp_name": candidate.source_acp_name,
+                "source_rule_id": candidate.source_rule_id,
+                "score": candidate.score,
+                "match_tier": candidate.match_tier,
+                "match_reason": ", ".join(candidate.match_reasons),
+            }
+            for candidate in match.fuzzy_candidates
+        ],
+        "selected_candidate": None,
+        "user_decision": match.user_decision,
+        "commit_impact": match.commit_impact or "Rule was not copied.",
         "skip_reason": match.skip_reason or "No selected source candidate.",
         "source_candidate_summary": [
             {
